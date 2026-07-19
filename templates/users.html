@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}مدیریت کاربران – بصیر{% endblock %}
+
+{% block content %}
+<div class="accounts-page">
+
+  <div class="page-header">
+    <h2 class="page-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      مدیریت کاربران سامانه
+    </h2>
+    <p class="page-sub">کاربرانِ ورود به سامانه را اضافه یا حذف کنید</p>
+  </div>
+
+  <!-- Add user -->
+  <div class="add-account-card">
+    <h3>➕ افزودن کاربر جدید</h3>
+    <form action="{{ url_for('user_add') }}" method="POST" class="add-form">
+      <div class="add-fields">
+        <div class="form-group">
+          <label>نام کاربری</label>
+          <input type="text" name="username" placeholder="مثلاً: karbar1" required />
+        </div>
+        <div class="form-group">
+          <label>رمز عبور</label>
+          <input type="password" name="password" placeholder="رمز عبور" required />
+        </div>
+        <button type="submit" class="btn-add">افزودن</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- User list -->
+  <div class="accounts-list">
+    {% if users %}
+      {% for u in users %}
+      <div class="account-row logged-in">
+        <div class="account-info">
+          <div class="account-avatar">{{ u.username[0] }}</div>
+          <div class="account-details">
+            <span class="account-name">{{ u.username }}</span>
+            <span class="account-phone" dir="ltr">
+              {% if u.username == main_admin %}مدیر{% else %}کاربر عادی{% endif %}
+            </span>
+          </div>
+          {% if u.username == main_admin %}
+          <span class="status-badge badge-active">● مدیر</span>
+          {% else %}
+          <span class="status-badge badge-inactive">○ کاربر عادی</span>
+          {% endif %}
+        </div>
+
+        <div class="account-actions">
+          {% if u.username == main_admin %}
+          <span class="btn-already-in">🔒 غیرقابل حذف</span>
+          {% else %}
+          <form action="{{ url_for('user_delete', username=u.username) }}" method="POST"
+                style="display:inline"
+                onsubmit="return confirm('آیا از حذف کاربر «{{ u.username }}» مطمئن هستید؟')">
+            <button type="submit" class="btn-delete">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+              </svg>
+              حذف
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="empty-accounts">
+      <div class="empty-icon-lg">👤</div>
+      <p>هنوز کاربری اضافه نشده است.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="login-guide">
+    <h4>📖 توضیحات دسترسی</h4>
+    <ol>
+      <li>فقط حساب مدیر («{{ main_admin }}») می‌تواند کاربران و اکانت‌های روبیکا را اضافه/حذف کند.</li>
+      <li>همهٔ کاربرانی که اضافه می‌شوند «عادی» هستند: فقط جستجو، مشاهدهٔ نتایج و گزارش فعالیت‌ها.</li>
+      <li>حساب مدیر («{{ main_admin }}») قابل حذف نیست.</li>
+    </ol>
+  </div>
+
+</div>
+{% endblock %}

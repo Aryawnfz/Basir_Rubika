@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}نتایج جستجو – بصیر{% endblock %}
+
+{% block content %}
+<div class="results-page">
+
+  <div class="results-header">
+    <div class="results-meta">
+      <a href="{{ url_for('index') }}" class="back-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+        جستجوی جدید
+      </a>
+      <div class="results-query-info">
+        <span class="query-label">جستجو:</span>
+        <span class="query-value">«{{ query }}»</span>
+        {% if date_from or date_to %}
+        <span class="query-dates">
+          {% if date_from %}از {{ date_from }}{% endif %}
+          {% if date_to %} تا {{ date_to }}{% endif %}
+        </span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="results-actions">
+      <div class="results-count">
+        <span class="count-num">{{ results|length }}</span>
+        <span class="count-label">نتیجه</span>
+      </div>
+      {% if results %}
+      <a href="{{ url_for('job_export', job_id=job.id) if job else url_for('export') }}" class="btn-export">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        خروجی اکسل
+      </a>
+      <a href="{{ url_for('job_stats_export', job_id=job.id) if job else url_for('stats_export') }}" class="btn-stats">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        آمار کلی
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if results %}
+  <div class="card-grid">
+    {% for result in results %}
+    <div class="result-card" id="card-{{ loop.index0 }}">
+      <div class="card-top">
+        <div class="card-channel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          {{ result.channel_name }}
+        </div>
+        <button type="button" class="card-remove" title="حذف از لیست"
+                data-index="{{ loop.index0 }}"
+                data-link="{{ result.message_link }}"
+                onclick="removeResult(this, {{ loop.index0 }})">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="card-body">
+        {% set msg = result.full_content if result.full_content else result.message %}
+        {% if msg|length > 220 %}
+          <p class="card-message">{{ msg[:220] }}<span class="ellipsis">...</span></p>
+          <button class="btn-more" onclick="openModal({{ loop.index0 }})">نمایش بیشتر ↓</button>
+        {% else %}
+          <p class="card-message">{{ msg if msg else '—' }}</p>
+        {% endif %}
+      </div>
+
+      {% if result.reactions or result.views or result.total_reactions %}
+      <div class="card-stats">
+        {% if result.views %}
+        <span class="card-views" title="بازدید">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          {{ result.views }}
+        </span>
+        {% endif %}
+        {% if result.total_reactions %}
+        <span class="card-reactions-total" title="مجموع ری‌اکشن‌ها">
+          {{ result.total_reactions }}
+        </span>
+        {% endif %}
+        {% if result.reactions %}
+        <span class="card-reactions">
+          {% for r in result.reactions %}
+            <span class="reaction-chip">{{ r.emoji }} {{ r.count }}</span>
+          {% endfor %}
+        </span>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <div class="card-footer">
+        <span class="card-date">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          {{ result.datetime_full if result.datetime_full else result.date }}
+        </span>
+        <span class="card-account">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          {{ result.account_name }}
+        </span>
+        {% if result.message_link %}
+        <a href="{{ result.message_link }}" target="_blank" class="card-link" title="لینک پیام">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        </a>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-icon">🔍</div>
+    <h3>نتیجه‌ای یافت نشد</h3>
+    <p>جستجوی «{{ query }}» در اکانت‌های روبیکا نتیجه‌ای نداشت.</p>
+    <a href="{{ url_for('index') }}" class="btn-back-home">بازگشت به جستجو</a>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Modals -->
+{% for result in results %}
+<div class="modal-overlay" id="modal-{{ loop.index0 }}" onclick="closeModal({{ loop.index0 }})">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        {{ result.channel_name }}
+      </h3>
+      <button class="modal-close" onclick="closeModal({{ loop.index0 }})">✕</button>
+    </div>
+    <div class="modal-body">
+      <p>{{ result.full_content if result.full_content else result.message }}</p>
+      {% if result.reactions or result.views %}
+      <div class="modal-stats">
+        {% if result.views %}<span class="stat-item">بازدید: {{ result.views }}</span>{% endif %}
+        {% if result.total_reactions %}<span class="stat-item">مجموع ری‌اکشن: {{ result.total_reactions }}</span>{% endif %}
+        {% if result.reactions %}
+        <div class="stat-reactions">
+          {% for r in result.reactions %}<span class="reaction-chip">{{ r.emoji }} {{ r.count }}</span>{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if result.message_link %}
+      <a href="{{ result.message_link }}" target="_blank" class="modal-link">مشاهده پیام در روبیکا</a>
+      {% endif %}
+    </div>
+    <div class="modal-footer">
+      <span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        {{ result.date }}
+      </span>
+      <span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        {{ result.account_name }}
+      </span>
+    </div>
+  </div>
+</div>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const DELETE_URL = "{{ url_for('job_result_delete', job_id=job.id) if job else url_for('session_result_delete') }}";
+
+async function removeResult(btn, id) {
+  if (!confirm('این پست از لیست نتایج، آمار کلی و خروجی اکسل حذف شود؟')) return;
+  btn.disabled = true;
+  const form = new FormData();
+  form.append('link', btn.dataset.link || '');
+  form.append('index', btn.dataset.index);
+  try {
+    const res = await fetch(DELETE_URL, { method: 'POST', body: form });
+    const data = await res.json();
+    if (!data.ok) { btn.disabled = false; alert('حذف انجام نشد.'); return; }
+  } catch (e) { btn.disabled = false; alert('خطا در اتصال به سرور.'); return; }
+
+  const card = document.getElementById('card-' + id);
+  if (card) { card.style.opacity = '0'; card.style.transform = 'scale(0.95)'; setTimeout(() => card.remove(), 250); }
+  const modal = document.getElementById('modal-' + id);
+  if (modal) modal.remove();
+
+  const countEl = document.querySelector('.results-count .count-num');
+  if (countEl) {
+    const n = Math.max(0, parseInt(countEl.textContent, 10) - 1);
+    countEl.textContent = n;
+    if (n === 0) setTimeout(() => window.location.reload(), 300);
+  }
+}
+
+function openModal(id) {
+  const modal = document.getElementById('modal-' + id);
+  modal.style.display = 'flex';
+  setTimeout(() => modal.classList.add('visible'), 10);
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal(id) {
+  const modal = document.getElementById('modal-' + id);
+  modal.classList.remove('visible');
+  setTimeout(() => {
+    modal.style.display = 'none';
+    document.body.style.overflow = '';
+  }, 250);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    document.querySelectorAll('.modal-overlay.visible').forEach((m, i) => {
+      closeModal(m.id.replace('modal-', ''));
+    });
+  }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}جستجو – بصیر{% endblock %}
+{% block content %}
+<div class="search-wrapper">
+  <div class="search-hero">
+    <div class="hero-badge">
+      <span class="badge-dot"></span>
+      {{ accounts|selectattr('profile_ready')|list|length }} اکانت فعال
+    </div>
+    <h1 class="hero-title"><span class="hero-icon">◈</span> بصیر</h1>
+    <p class="hero-sub">جستجوی هوشمند در پیام‌های روبیکا</p>
+  </div>
+
+  <form action="{{ url_for('search') }}" method="POST" class="search-form" id="searchForm">
+    <div class="search-box-wrap">
+      <svg class="search-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" id="searchInput" name="query" class="search-input-main"
+             placeholder="کلمه یا عبارتی را جستجو کنید..." autocomplete="off" autofocus required />
+      <button type="submit" id="searchButton" class="search-submit-btn">جستجو</button>
+    </div>
+
+    <div class="filters-row">
+      <div class="filter-item" data-pdp data-placeholder="از تاریخ">
+        <label>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          از تاریخ
+        </label>
+        <div class="pdp-input-wrap">
+          <input type="text"   class="filter-input pdp-trigger" readonly placeholder="انتخاب تاریخ"/>
+          <input type="hidden" class="pdp-value" name="date_from" />
+          <span class="pdp-cal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+        </div>
+      </div>
+      <div class="filter-divider">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+      </div>
+      <div class="filter-item" data-pdp data-placeholder="تا تاریخ">
+        <label>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          تا تاریخ
+        </label>
+        <div class="pdp-input-wrap">
+          <input type="text"   class="filter-input pdp-trigger" readonly placeholder="انتخاب تاریخ"/>
+          <input type="hidden" class="pdp-value" name="date_to" />
+          <span class="pdp-cal-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  {% if accounts|length == 0 %}
+  <div class="no-accounts-hint">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    هیچ اکانت روبیکا‌ای تعریف نشده. {% if current_role == ROLE_ADMIN %}<a href="{{ url_for('accounts_page') }}">از اینجا اضافه کنید</a>{% else %}برای افزودن اکانت با مدیر تماس بگیرید.{% endif %}
+  </div>
+  {% elif accounts|selectattr('profile_ready')|list|length == 0 %}
+  <div class="no-accounts-hint warning">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+    {{ accounts|length }} اکانت تعریف شده اما هنوز وارد روبیکا نشده. {% if current_role == ROLE_ADMIN %}<a href="{{ url_for('accounts_page') }}">ورود به روبیکا</a>{% else %}برای ورود به روبیکا با مدیر تماس بگیرید.{% endif %}
+  </div>
+  {% else %}
+  <div class="accounts-chips">
+    {% for a in accounts if a.profile_ready %}<span class="chip chip-active"><span class="chip-dot"></span>{{ a.name }}</span>{% endfor %}
+    {% for a in accounts if not a.profile_ready %}<span class="chip chip-inactive">{{ a.name }}</span>{% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- ══ لیست جستجوها ══════════════════════════════════════════════════ -->
+  <div class="jobs-section">
+    <div class="jobs-header">
+      <h3 class="jobs-title">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        لیست جستجوها
+      </h3>
+    </div>
+
+    <div class="jobs-table-wrap">
+      <div class="jobs-table-head">
+        <div class="jt-col jt-col-num">ردیف</div>
+        <div class="jt-col jt-col-title">عنوان</div>
+        <div class="jt-col">فیلتر تاریخ</div>
+        <div class="jt-col jt-col-status">وضعیت</div>
+        <div class="jt-col">زمان ثبت</div>
+        <div class="jt-col jt-col-actions">عملیات</div>
+      </div>
+      <div class="jobs-table-body" id="jobsTableBody">
+        <div class="jobs-empty" id="jobsEmpty">هنوز جستجویی ثبت نشده است.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='datepicker.js') }}"></script>
+<script src="{{ url_for('static', filename='jobs.js') }}"></script>
+{% endblock %}
