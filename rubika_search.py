@@ -4,14 +4,14 @@ Rubika Web automation با Persistent Chrome Profile (user_data_dir).
 هر اکانت یه پوشه Chrome جداگانه داره — IndexedDB/cookies/localStorage
 همه روی دیسک ماندگارند و نیاز به login مجدد نیست.
 
-وب روبیکا (web.rubika.ir) یک کلاینت مبتنی بر Telegram Web K است، پس:
-  • جستجو از باکسِ کناری (.input-search-input) انجام می‌شود؛ نتایجِ پیام‌ها
-    در گروهِ «پیام‌ها» (.search-group-messages) نمایش داده می‌شوند.
+وب روبیکا (web.rubika.ir) یک اپلیکیشن Angular (فورکِ tweb) است، پس (سلکتورهای واقعی):
+  • جستجو از باکسِ کناری (.input-search-input) انجام می‌شود؛ نتایج در
+    .search-super / .search-super-item / .chatlist-chat ظاهر می‌شوند.
   • برخلاف ایتا/بله، روبیکا «جستجوی کانال‌به‌کانال» و «جستجوی سراسری»
     جداگانه ندارد — فقط همین یک جستجوی عادی. (طبق خواستهٔ کاربر با الگوی بله.)
-  • هر پیام روی حبابِ خودش (.bubble) ری‌اکشن‌ها (.reactions .reaction)،
-    بازدید (.post-views) و زمان را نشان می‌دهد؛ محتوای کامل مستقیماً از
-    همان حباب استخراج می‌شود (نیازی به بازکردنِ لینکِ عمومی نیست).
+  • ری‌اکشن‌ها: .reactions.reactions-block > .reaction.reaction-block
+    (شمارش .reaction-counter، استیکر .reaction-sticker)؛ بازدید با آیکن
+    .rbico-channelviews؛ متن پیام [rb-message-text]/.message.
 
 Public API:
   search_all_accounts(accounts, ...)  → جستجوی موازی
@@ -56,24 +56,24 @@ _USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-# نشانه‌های لاگین موفق (صفحهٔ اصلی چت‌ها)
+# نشانه‌های لاگین موفق (چیدمان اصلی چت‌ها بعد از ورود)
 LOGGED_IN_SELECTORS = [
-    "#column-center",
-    "#column-left .chatlist",
     ".chatlist-container",
+    ".chats-container",
+    ".chatlist-chat",
     ".chatlist",
-    "#column-left",
+    ".main-columns",
 ]
 
 # باکس جستجوی کناری
 SEARCH_SELECTORS = [
+    ".sidebar-search .input-search-input",
     "#column-left .input-search-input",
-    ".sidebar-header .input-search-input",
-    ".input-search-input",
+    ".input-search .input-search-input",
     "input.input-search-input",
+    ".input-search-input",
     "input[type='search']",
     "input[placeholder*='جستجو']",
-    "input[placeholder*='Search' i]",
 ]
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -140,10 +140,10 @@ _JS_COLLECT_RESULTS = r"""
 () => {
   // فقط ردیف‌های گروهِ «پیام‌ها» (نه گفتگوها/مخاطبین) — روبیکا مثل tweb
   // نتایجِ جستجوی پیام را در .search-group-messages می‌گذارد.
-  const grp = document.querySelector('.search-group-messages')
-           || document.querySelector('.search-super');
+  const grp = document.querySelector('.search-super')
+           || document.querySelector('.search-group-messages');
   const scope = grp || document.querySelector('#search-container') || document;
-  const rows = [...scope.querySelectorAll('.chatlist-chat')];
+  const rows = [...scope.querySelectorAll('.search-super-item, .chatlist-chat')];
   const out = [];
   rows.forEach((r, i) => {
     const titleEl = r.querySelector('.peer-title, .dialog-title, .user-title');
@@ -164,8 +164,8 @@ _JS_COLLECT_RESULTS = r"""
 
 _JS_SCROLL_RESULTS = r"""
 () => {
-  const grp = document.querySelector('.search-group-messages')
-           || document.querySelector('.search-super');
+  const grp = document.querySelector('.search-super')
+           || document.querySelector('.search-group-messages');
   const sc = (grp && grp.closest('.scrollable')) ||
              document.querySelector('#search-container .scrollable') ||
              document.querySelector('.sidebar-search .scrollable');
@@ -194,11 +194,11 @@ _JS_EXTRACT_BUBBLE = r"""
   if (!bubble) return null;
 
   const textEl = bubble.querySelector(
-    '.message, .bubble-content .message, .text-content, .translatable-message'
+    '[rb-message-text], .message, .bubble-content .message, .text-content, .translatable-message'
   );
   const content = pickText(textEl);
 
-  const reactions = [...bubble.querySelectorAll('.reactions .reaction, .reaction.reaction-block')].map(rc => {
+  const reactions = [...bubble.querySelectorAll('.reactions .reaction.reaction-block, .reactions-block .reaction, .reaction.reaction-block')].map(rc => {
     const cntEl = rc.querySelector('.reaction-counter');
     const count = cntEl ? (cntEl.textContent || '').trim() : '';
     let emoji = '';
@@ -214,8 +214,12 @@ _JS_EXTRACT_BUBBLE = r"""
     return {emoji, count};
   }).filter(r => r.count);
 
-  const viewsEl = bubble.querySelector('.post-views, .time .post-views, .channel-views');
-  const views = pickText(viewsEl);
+  const viewsEl = bubble.querySelector('.post-views, .rbico-channelviews, .channel-views, .views-count');
+  let views = pickText(viewsEl);
+  if (!views) {
+    const vi = bubble.querySelector('.rbico-channelviews');
+    if (vi && vi.parentElement) views = pickText(vi.parentElement).replace(/[^0-9\u06F0-\u06F9KMkm.,]/g,'').trim();
+  }
 
   const timeEl = bubble.querySelector('.time-inner, .time');
   const time = timeEl ? ((timeEl.getAttribute('title') || timeEl.innerText || '').trim()) : '';
