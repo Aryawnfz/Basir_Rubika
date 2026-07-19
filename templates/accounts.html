@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% block title %}مدیریت اکانت‌ها – بصیر{% endblock %}
+
+{% block content %}
+<div class="accounts-page">
+
+  <div class="page-header">
+    <h2 class="page-title">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      مدیریت اکانت‌های روبیکا
+    </h2>
+    <p class="page-sub">اکانت‌های روبیکا را اضافه کنید و برای جستجو وارد شوید</p>
+  </div>
+
+  <!-- Add account -->
+  <div class="add-account-card">
+    <h3>➕ افزودن اکانت جدید</h3>
+    <form action="{{ url_for('account_add') }}" method="POST" class="add-form">
+      <div class="add-fields">
+        <div class="form-group">
+          <label>نام نمایشی</label>
+          <input type="text" name="name" placeholder="مثلاً: اکانت اصلی" required />
+        </div>
+        <div class="form-group">
+          <label>شماره تلفن</label>
+          <input type="text" name="phone" placeholder="...09" dir="ltr" required />
+        </div>
+        <button type="submit" class="btn-add">افزودن</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Account list -->
+  <div class="accounts-list">
+    {% if accounts %}
+      {% for account in accounts %}
+      <div class="account-row {% if account.profile_ready %}logged-in{% endif %}" id="row-{{ account.id }}">
+        <div class="account-info">
+          <div class="account-avatar">{{ account.name[0] }}</div>
+          <div class="account-details">
+            <span class="account-name">{{ account.name }}</span>
+            <span class="account-phone" dir="ltr">{{ account.phone }}</span>
+          </div>
+          {% if account.profile_ready %}
+          <span class="status-badge badge-active" id="badge-{{ account.id }}">● پروفایل آماده</span>
+          {% else %}
+          <span class="status-badge badge-inactive" id="badge-{{ account.id }}">○ نیاز به ورود</span>
+          {% endif %}
+        </div>
+
+        <div class="account-actions">
+          {% if not account.profile_ready %}
+          <button class="btn-bale-login"
+                  onclick="startLogin('{{ account.id }}', '{{ account.name }}')" >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+              <polyline points="10 17 15 12 10 7"/>
+              <line x1="15" y1="12" x2="3" y2="12"/>
+            </svg>
+            ورود به روبیکا
+          </button>
+          {% else %}
+          <span class="btn-already-in">✅ آماده جستجو</span>
+          {% endif %}
+
+          <form action="{{ url_for('account_delete', account_id=account.id) }}" method="POST"
+                style="display:inline"
+                onsubmit="return confirm('آیا از حذف اکانت «{{ account.name }}» مطمئن هستید؟')">
+            <button type="submit" class="btn-delete">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                <path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+              </svg>
+              حذف
+            </button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+    <div class="empty-accounts">
+      <div class="empty-icon-lg">👤</div>
+      <p>هنوز اکانتی اضافه نشده است.</p>
+      <p class="empty-hint">از فرم بالا یک اکانت روبیکا اضافه کنید.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="login-guide">
+    <h4>📖 راهنمای ورود</h4>
+    <ol>
+      <li>اکانت را با نام و شماره تلفن اضافه کنید.</li>
+      <li>روی دکمه <strong>«ورود به روبیکا»</strong> کلیک کنید.</li>
+      <li>روبیکا به صورت خودکار در پس‌زمینه باز می‌شود و شماره وارد می‌شود.</li>
+      <li>کد تایید را در فرم پنجره‌ای که باز می‌شود وارد کنید.</li>
+      <li>پس از تایید، اکانت آماده جستجو خواهد بود.</li>
+    </ol>
+  </div>
+
+</div>
+
+
+<!-- ══ OTP Modal ═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="otp-modal">
+  <div class="modal-box otp-modal-box">
+
+    <!-- Header -->
+    <div class="modal-header">
+      <h3 id="modal-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="5" y="11" width="14" height="10" rx="2"/>
+          <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+        </svg>
+        ورود به روبیکا
+      </h3>
+      <button class="modal-close" onclick="closeOtpModal()">✕</button>
+    </div>
+
+    <!-- Body — چند state مختلف -->
+    <div class="modal-body otp-body">
+
+      <!-- حالت loading -->
+      <div id="state-loading" class="otp-state">
+        <div class="otp-spinner"></div>
+        <p class="otp-status-text" id="loading-msg">در حال راه‌اندازی...</p>
+      </div>
+
+      <!-- حالت وارد کردن OTP -->
+      <div id="state-otp" class="otp-state" style="display:none">
+        <div class="otp-phone-sent">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#22d3a0" stroke-width="2">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+          </svg>
+          <p>کد تایید به شماره ارسال شد</p>
+        </div>
+
+        <div class="otp-input-wrap">
+          <label>کد تایید دریافتی را وارد کنید:</label>
+          <input type="text" id="otp-input" inputmode="numeric" maxlength="6"
+                 placeholder="مثلاً: 12345" dir="ltr" autocomplete="one-time-code" />
+        </div>
+
+        <button class="btn-confirm-otp" id="btn-confirm-otp" onclick="confirmOtp()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          تایید و ورود
+        </button>
+
+        <p class="otp-hint">کد را دریافت نکردید؟ چند لحظه صبر کنید یا اکانت را حذف و دوباره اضافه کنید.</p>
+      </div>
+
+      <!-- حالت verifying -->
+      <div id="state-verifying" class="otp-state" style="display:none">
+        <div class="otp-spinner"></div>
+        <p class="otp-status-text">در حال تایید کد...</p>
+      </div>
+
+      <!-- حالت موفق -->
+      <div id="state-success" class="otp-state" style="display:none">
+        <div class="otp-success-icon">✅</div>
+        <h4>ورود موفق!</h4>
+        <p>اکانت آماده جستجو است. صفحه بارگذاری مجدد می‌شود...</p>
+      </div>
+
+      <!-- حالت خطا -->
+      <div id="state-error" class="otp-state" style="display:none">
+        <div class="otp-error-icon">❌</div>
+        <h4>خطا در ورود</h4>
+        <p id="error-msg" class="otp-error-text"></p>
+        <button class="btn-close-modal" onclick="closeOtpModal()">بستن</button>
+      </div>
+
+    </div><!-- /modal-body -->
+  </div>
+</div>
+{% endblock %}
+
+
+{% block scripts %}
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let _accountId   = null;
+let _pollTimer   = null;
+let _otpSent     = false;
+
+// ── باز کردن modal و شروع فرایند ────────────────────────────────────────────
+async function startLogin(accountId, accountName) {
+  _accountId = accountId;
+  _otpSent   = false;
+
+  // نشان بده modal
+  showState('loading');
+  document.getElementById('loading-msg').textContent = 'در حال راه‌اندازی...';
+  document.getElementById('modal-title').querySelector('span') &&
+    (document.getElementById('modal-title').lastChild.textContent = ' ورود – ' + accountName);
+  openOtpModal();
+
+  // شروع login در backend
+  try {
+    const res = await fetch(`/accounts/start-login/${accountId}`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.ok) {
+      showError(data.error || 'خطای ناشناخته');
+      return;
+    }
+  } catch (e) {
+    showError('خطا در اتصال به سرور');
+    return;
+  }
+
+  // شروع polling
+  _pollTimer = setInterval(pollStatus, 1000);
+}
+
+// ── Polling وضعیت ────────────────────────────────────────────────────────────
+async function pollStatus() {
+  if (!_accountId) return;
+  try {
+    const res  = await fetch(`/accounts/login-status/${_accountId}`);
+    const data = await res.json();
+    handleStatus(data);
+  } catch (e) {
+    // ignore network blips
+  }
+}
+
+function handleStatus(data) {
+  const st = data.status;
+
+  if (st === 'starting' || st === 'entering_phone') {
+    showState('loading');
+    document.getElementById('loading-msg').textContent = data.message || 'در حال راه‌اندازی...';
+
+  } else if (st === 'waiting_otp' && !_otpSent) {
+    showState('otp');
+    document.getElementById('otp-input').focus();
+
+  } else if (st === 'verifying') {
+    showState('verifying');
+
+  } else if (st === 'success') {
+    stopPolling();
+    showState('success');
+    // mark در backend
+    fetch(`/accounts/finish-login/${_accountId}`, { method: 'POST' });
+    setTimeout(() => { window.location.reload(); }, 2000);
+
+  } else if (st === 'error' || st === 'timeout' || st === 'not_found') {
+    stopPolling();
+    showError(data.error || data.message || 'خطای ناشناخته');
+  }
+}
+
+// ── ارسال OTP ────────────────────────────────────────────────────────────────
+async function confirmOtp() {
+  const otp = document.getElementById('otp-input').value.trim();
+  if (!otp) {
+    document.getElementById('otp-input').focus();
+    return;
+  }
+
+  _otpSent = true;
+  showState('verifying');
+
+  const form = new FormData();
+  form.append('otp', otp);
+  try {
+    const res  = await fetch(`/accounts/submit-otp/${_accountId}`, {
+      method: 'POST', body: form
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      _otpSent = false;
+      showError(data.error || 'خطا در ارسال کد');
+    }
+    // وضعیت بعدی از polling میاد
+  } catch (e) {
+    _otpSent = false;
+    showError('خطا در اتصال');
+  }
+}
+
+// ── Enter key در OTP input ───────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('otp-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') confirmOtp();
+  });
+});
+
+// ── کمک‌کننده‌ها ─────────────────────────────────────────────────────────────
+function showState(name) {
+  ['loading','otp','verifying','success','error'].forEach(s => {
+    document.getElementById('state-' + s).style.display = (s === name) ? 'flex' : 'none';
+  });
+}
+
+function showError(msg) {
+  showState('error');
+  document.getElementById('error-msg').textContent = msg;
+}
+
+function stopPolling() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+}
+
+function openOtpModal() {
+  const m = document.getElementById('otp-modal');
+  m.style.display = 'flex';
+  setTimeout(() => m.classList.add('visible'), 10);
+  document.body.style.overflow = 'hidden';
+}
+
+function closeOtpModal() {
+  stopPolling();
+  const m = document.getElementById('otp-modal');
+  m.classList.remove('visible');
+  setTimeout(() => { m.style.display = 'none'; document.body.style.overflow = ''; }, 250);
+  // reset inputs
+  document.getElementById('otp-input').value = '';
+  _otpSent = false;
+}
+
+// بستن با Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeOtpModal();
+});
+</script>
+{% endblock %}

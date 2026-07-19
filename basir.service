@@ -1,0 +1,30 @@
+[Unit]
+Description=Basir – Rubika Search Platform
+After=network.target
+
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/Basir/basir
+ExecStart=/usr/local/bin/gunicorn -c gunicorn.conf.py app:app
+
+# متغیرهای محیطی — مقدارها رو عوض کن
+Environment="BASIR_USER=admin"
+Environment="BASIR_PASS=basir1234"
+Environment="BASIR_SECRET=your-very-secret-key-change-this"
+
+Restart=always
+RestartSec=5
+
+# Playwright برای روبیکا مرورگر را headed اجرا می‌کند و به یک نمایشگر (X) نیاز دارد.
+# اگر سرور نمایشگر ندارد، یک X مجازی راه بیندازید و DISPLAY را ست کنید:
+#   Xvfb :0 -screen 0 1280x800x24 &
+Environment="DISPLAY=:0"
+
+# لاگ‌ها
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=basir
+
+[Install]
+WantedBy=multi-user.target
