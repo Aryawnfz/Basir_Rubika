@@ -4,14 +4,14 @@ Rubika Web automation با Persistent Chrome Profile (user_data_dir).
 هر اکانت یه پوشه Chrome جداگانه داره — IndexedDB/cookies/localStorage
 همه روی دیسک ماندگارند و نیاز به login مجدد نیست.
 
-وب روبیکا (web.rubika.ir) یک کلاینت مبتنی بر Telegram Web K است، پس:
-  • جستجو از باکسِ کناری (.input-search-input) انجام می‌شود؛ نتایجِ پیام‌ها
-    در گروهِ «پیام‌ها» (.search-group-messages) نمایش داده می‌شوند.
+وب روبیکا (web.rubika.ir) یک اپلیکیشن Angular (فورکِ tweb) است، پس (سلکتورهای واقعی):
+  • جستجو از باکسِ کناری (.input-search-input) انجام می‌شود؛ نتایج در
+    .search-super / .search-super-item / .chatlist-chat ظاهر می‌شوند.
   • برخلاف ایتا/بله، روبیکا «جستجوی کانال‌به‌کانال» و «جستجوی سراسری»
     جداگانه ندارد — فقط همین یک جستجوی عادی. (طبق خواستهٔ کاربر با الگوی بله.)
-  • هر پیام روی حبابِ خودش (.bubble) ری‌اکشن‌ها (.reactions .reaction)،
-    بازدید (.post-views) و زمان را نشان می‌دهد؛ محتوای کامل مستقیماً از
-    همان حباب استخراج می‌شود (نیازی به بازکردنِ لینکِ عمومی نیست).
+  • ری‌اکشن‌ها: .reactions.reactions-block > .reaction.reaction-block
+    (شمارش .reaction-counter، استیکر .reaction-sticker)؛ بازدید با آیکن
+    .rbico-channelviews؛ متن پیام [rb-message-text]/.message.
 
 Public API:
   search_all_accounts(accounts, ...)  → جستجوی موازی
@@ -56,35 +56,43 @@ _USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-# نشانه‌های لاگین موفق (صفحهٔ اصلی چت‌ها)
+# نشانه‌های لاگین موفق (چیدمان اصلی چت‌ها بعد از ورود)
 LOGGED_IN_SELECTORS = [
-    "#column-center",
-    "#column-left .chatlist",
     ".chatlist-container",
+    ".chats-container",
+    ".chatlist-chat",
     ".chatlist",
-    "#column-left",
+    ".main-columns",
 ]
 
 # باکس جستجوی کناری
 SEARCH_SELECTORS = [
+    ".sidebar-search .input-search-input",
     "#column-left .input-search-input",
-    ".sidebar-header .input-search-input",
-    ".input-search-input",
+    ".input-search .input-search-input",
     "input.input-search-input",
+    ".input-search-input",
     "input[type='search']",
     "input[placeholder*='جستجو']",
-    "input[placeholder*='Search' i]",
 ]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # helper های متن/عدد
 # ══════════════════════════════════════════════════════════════════════════════
-_NORMALIZE_RE = re.compile(r'[\s\u200c*_~`\u00AB\u00BB\u2026.\-()0-9\u06F0-\u06F9]+')
+_SHORTCODE_RE = re.compile(r':[A-Za-z0-9_+\-]+:')          # اموجی‌های شورت‌کد مثل :red_circle:
+_KEEP_LETTERS_RE = re.compile(r'[^A-Za-z\u0600-\u06FF]')   # فقط حروفِ لاتین و عربی/فارسی
+_AR_DIGIT_PUNCT_RE = re.compile(r'[\u0660-\u0669\u06F0-\u06F9\u060C\u061B\u061F\u066A-\u066D\u200c]')
 
 
 def _normalize(s: str) -> str:
-    """برای تطبیقِ تقریبی: فاصله‌ها، اعداد و نشانه‌های ویژه را حذف می‌کند."""
-    return _NORMALIZE_RE.sub('', s or '')
+    """
+    برای تطبیقِ تقریبیِ اسنیپت با محتوای حباب: اموجی‌ها/شورت‌کدها، فاصله‌ها،
+    اعداد و نشانه‌ها حذف می‌شوند تا فقط حروفِ متن بماند.
+    """
+    s = _SHORTCODE_RE.sub('', s or '')
+    s = _KEEP_LETTERS_RE.sub('', s)       # حذف اموجی/نشانه/فاصله (هرچه حرف نیست)
+    s = _AR_DIGIT_PUNCT_RE.sub('', s)     # حذف ارقام و نشانه‌های عربی که در بازهٔ حروف بودند
+    return s
 
 
 def _snippet_matches(snippet: str, full_content: str) -> bool:
@@ -138,25 +146,27 @@ def _parse_count(s: str) -> int:
 # ══════════════════════════════════════════════════════════════════════════════
 _JS_COLLECT_RESULTS = r"""
 () => {
-  // فقط ردیف‌های گروهِ «پیام‌ها» (نه گفتگوها/مخاطبین) — روبیکا مثل tweb
-  // نتایجِ جستجوی پیام را در .search-group-messages می‌گذارد.
-  const grp = document.querySelector('.search-group-messages')
-           || document.querySelector('.search-super');
-  const scope = grp || document.querySelector('#search-container') || document;
-  const rows = [...scope.querySelectorAll('.chatlist-chat')];
+  // فقط ردیف‌های گروهِ «پیام‌ها» (نه «جستجوی گسترده»/گفتگوها/مخاطبین).
+  // ساختار واقعیِ روبیکا (Angular):
+  //   .search-group-messages > ul.chatlist > li  با
+  //   .peer-title (عنوان چت)، .dialog-subtitle/.user-last-message (اسنیپت)،
+  //   .message-time (زمان). این ردیف‌ها data-mid ندارند؛ با ایندکس کلیک می‌کنیم.
+  const grp = document.querySelector('.search-group-messages');
+  if (!grp) return [];
+  const rows = [...grp.querySelectorAll('ul.chatlist > li')];
   const out = [];
   rows.forEach((r, i) => {
-    const titleEl = r.querySelector('.peer-title, .dialog-title, .user-title');
-    const subEl   = r.querySelector('.dialog-subtitle, .row-subtitle');
-    const timeEl  = r.querySelector('.dialog-time, .message-time, .row-time');
+    // ترتیب مهم است: .peer-title اول، وگرنه querySelectorِ چندگانه ممکن است
+    // .dialog-title (والدِ عنوان+زمان) را برگرداند و زمان به عنوان بچسبد.
+    const titleEl = r.querySelector('.peer-title') || r.querySelector('.user-title') || r.querySelector('.dialog-title');
+    const subEl   = r.querySelector('.dialog-subtitle, .user-last-message');
+    const timeEl  = r.querySelector('.message-time, .dialog-time');
     const title = titleEl ? (titleEl.textContent || '').trim() : '';
     const sub   = subEl   ? (subEl.textContent   || '').trim() : '';
     const time  = timeEl  ? (timeEl.textContent  || '').trim() : '';
     if (!sub && !title) return;
-    const mid    = (r.dataset && r.dataset.mid)    ? r.dataset.mid    : '';
-    const peerId = (r.dataset && r.dataset.peerId) ? r.dataset.peerId : '';
     r.setAttribute('data-basir-idx', String(i));
-    out.push({idx: i, title, subtitle: sub, time, mid, peerId});
+    out.push({idx: i, title, subtitle: sub, time, mid: '', peerId: ''});
   });
   return out;
 }
@@ -164,10 +174,11 @@ _JS_COLLECT_RESULTS = r"""
 
 _JS_SCROLL_RESULTS = r"""
 () => {
-  const grp = document.querySelector('.search-group-messages')
-           || document.querySelector('.search-super');
-  const sc = (grp && grp.closest('.scrollable')) ||
-             document.querySelector('#search-container .scrollable') ||
+  const grp = document.querySelector('.search-group-messages');
+  const sc = (grp && (grp.closest('.scrollable') ||
+                      grp.closest('.search-super-container-chats') ||
+                      grp.closest('.sidebar-content'))) ||
+             document.querySelector('.search-super .scrollable') ||
              document.querySelector('.sidebar-search .scrollable');
   if (!sc) return -1;
   const before = sc.scrollTop;
@@ -177,36 +188,53 @@ _JS_SCROLL_RESULTS = r"""
 """
 
 # استخراجِ کاملِ محتوا/ری‌اکشن/بازدید از حبابِ پیام در چتِ باز شده.
+# چون ردیف‌های نتیجه data-mid ندارند، حبابِ درست را با تطبیقِ اسنیپت پیدا می‌کنیم.
 _JS_EXTRACT_BUBBLE = r"""
-(mid) => {
-  const pickText = el => (el ? (el.innerText || el.textContent || '').trim() : '');
+(snippet) => {
+  const norm = s => (s || '')
+    .replace(/:[A-Za-z0-9_+\-]+:/g, '')          // شورت‌کدهای اموجی
+    .replace(/[^A-Za-z\u0600-\u06FF]/g, '')      // فقط حروفِ لاتین و عربی/فارسی
+    .replace(/[\u0660-\u0669\u06F0-\u06F9\u060C\u061B\u061F]/g, '');  // ارقام/نشانه‌های عربی
+  const key = norm(snippet).slice(0, 16);
 
+  document.querySelectorAll('[data-basir-target]').forEach(e => e.removeAttribute('data-basir-target'));
+
+  const bubbles = [...document.querySelectorAll('.bubbles .bubble, .bubble')];
   let bubble = null;
-  if (mid) {
-    bubble = document.querySelector('.bubble[data-mid="' + mid + '"]');
+  if (key) {
+    for (const b of bubbles) {
+      const m = b.querySelector('.message');
+      if (!m) continue;
+      const t = norm(m.textContent);
+      if (t && (t.includes(key) || key.includes(t.slice(0, 16)))) { bubble = b; break; }
+    }
   }
   if (!bubble) {
-    // حبابِ هایلایت‌شده که کلاینت بعد از پرش به پیام علامت می‌زند
     bubble = document.querySelector(
-      '.bubbles .bubble.is-highlighted, .bubbles .bubble.backlight, .bubbles .bubble.is-selected'
-    );
+      '.bubbles .bubble.is-highlighted, .bubbles .bubble.backlight, .bubbles .bubble.is-selected');
   }
   if (!bubble) return null;
+  bubble.setAttribute('data-basir-target', '1');
 
-  const textEl = bubble.querySelector(
-    '.message, .bubble-content .message, .text-content, .translatable-message'
-  );
-  const content = pickText(textEl);
+  // محتوای متنِ پیام (بدون زمان/بازدید/ری‌اکشن)
+  let content = '';
+  const textEl = bubble.querySelector('[rb-message-text], .message, .text-content, .translatable-message');
+  if (textEl) {
+    const clone = textEl.cloneNode(true);
+    clone.querySelectorAll('.time, [rb-message-time], .reactions, .reactions-block').forEach(e => e.remove());
+    content = (clone.innerText || clone.textContent || '').trim();
+  }
 
-  const reactions = [...bubble.querySelectorAll('.reactions .reaction, .reaction.reaction-block')].map(rc => {
+  // ری‌اکشن‌ها: .reactions .reaction.reaction-block > .reaction-sticker .emoji[title] + .reaction-counter
+  const reactions = [...bubble.querySelectorAll('.reactions .reaction.reaction-block, .reactions-block .reaction.reaction-block')].map(rc => {
     const cntEl = rc.querySelector('.reaction-counter');
     const count = cntEl ? (cntEl.textContent || '').trim() : '';
     let emoji = '';
-    const img = rc.querySelector('img');
-    if (img && (img.alt || img.getAttribute('alt'))) emoji = img.alt || img.getAttribute('alt');
+    const em = rc.querySelector('.reaction-sticker .emoji, .emoji, .reaction-sticker span[title]');
+    if (em) emoji = (em.getAttribute('title') || em.textContent || '').trim();
     if (!emoji) {
-      const st = rc.querySelector('.reaction-sticker, .reaction-sticker-icon, .super-emoji');
-      if (st) emoji = (st.getAttribute('data-sticker-emoji') || st.textContent || '').trim();
+      const img = rc.querySelector('img');
+      if (img) emoji = (img.getAttribute('alt') || '').trim();
     }
     if (!emoji) {
       emoji = (rc.textContent || '').replace(/[0-9\u06F0-\u06F9,\u060C.KMkm\s]/g, '').trim();
@@ -214,11 +242,22 @@ _JS_EXTRACT_BUBBLE = r"""
     return {emoji, count};
   }).filter(r => r.count);
 
-  const viewsEl = bubble.querySelector('.post-views, .time .post-views, .channel-views');
-  const views = pickText(viewsEl);
-
-  const timeEl = bubble.querySelector('.time-inner, .time');
-  const time = timeEl ? ((timeEl.getAttribute('title') || timeEl.innerText || '').trim()) : '';
+  // زمان و بازدید هر دو داخلِ [rb-message-time].time هستند؛ از نسخهٔ .inner می‌خوانیم.
+  let views = '', time = '';
+  const timeRoot = bubble.querySelector('[rb-message-time], .time');
+  if (timeRoot) {
+    const inner = timeRoot.querySelector('.inner') || timeRoot;
+    const spans = [...inner.querySelectorAll('span')].reverse();
+    const ts = spans.find(s => /\d{1,2}:\d{2}/.test(s.textContent));
+    time = ts ? ts.textContent.trim() : '';
+    const hasViews = !!(timeRoot.querySelector('.rbico-channelviews') || bubble.querySelector('.rbico-channelviews'));
+    if (hasViews) {
+      let txt = (inner.textContent || '').replace(/\s+/g, ' ').trim();
+      if (time) txt = txt.replace(time, ' ');
+      const vm = txt.match(/[\d\u06F0-\u06F9][\d\u06F0-\u06F9.,]*\s?[KMkm]?/);
+      views = vm ? vm[0].replace(/\s+/g, '').trim() : '';
+    }
+  }
 
   return {content, reactions, views, time};
 }
@@ -267,10 +306,10 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
     }
 
     data = None
-    for _ in range(16):
-        await asyncio.sleep(0.4)
+    for _ in range(24):
+        await asyncio.sleep(0.5)
         try:
-            data = await page.evaluate(_JS_EXTRACT_BUBBLE, mid)
+            data = await page.evaluate(_JS_EXTRACT_BUBBLE, snippet)
         except Exception:
             data = None
         if data and (data.get('content') or data.get('reactions')):
@@ -295,11 +334,9 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
 
     # تلاشِ اختیاری برای گرفتنِ لینکِ پیام (کانال‌ها) از منوی کلیک‌راست
     try:
-        bubble = None
-        if mid:
-            bubble = await page.query_selector(f'.bubble[data-mid="{mid}"] .bubble-content')
+        bubble = await page.query_selector('.bubble[data-basir-target="1"] .bubble-content')
         if bubble is None:
-            bubble = await page.query_selector('.bubbles .bubble.is-highlighted .bubble-content')
+            bubble = await page.query_selector('.bubble[data-basir-target="1"]')
         if bubble is not None and await bubble.is_visible():
             await bubble.click(button="right", timeout=4000)
             await asyncio.sleep(0.6)
@@ -548,7 +585,7 @@ async def _search_one(account: dict, query: str,
                     print(f"[Basir] «{account['name']}» — جستجو: {query}")
 
                     # پیدا کردن باکس جستجو
-                    search_el = await _first_selector(page, SEARCH_SELECTORS, timeout=SEARCH_TIMEOUT_MS)
+                    search_el = await _first_selector(page, SEARCH_SELECTORS, timeout=12_000)
                     if not search_el:
                         print(f"[Basir] باکس جستجو برای «{account['name']}» پیدا نشد")
                         return []
@@ -559,13 +596,38 @@ async def _search_one(account: dict, query: str,
                     await asyncio.sleep(3)
                     print("Started Searching ... ")
 
-                    # ── جمع‌آوری نتایجِ پیام‌ها با اسکرول ──────────────────
+                    # ── جمع‌آوری نتایجِ پیام‌ها ─────────────────────────────
+                    # هر تکرار: باکس جستجو را فعال نگه می‌داریم، لیستِ نتایج را
+                    # تازه جمع می‌کنیم (چون کلیک روی یک نتیجه و باز شدن چت،
+                    # عناصرِ <li> را در Angular بازسازی و data-basir-idx را پاک
+                    # می‌کند)، سپس اولین ردیفِ دیده‌نشده را کلیک و استخراج می‌کنیم.
                     MessageTemp = []          # پیام‌های نهاییِ استخراج‌شده
                     seen = set()              # کلیدِ یکتا برای جلوگیری از تکرار
-                    tryAttempt = 0
-                    stale_scrolls = 0
+                    no_progress = 0
 
-                    for _round in range(100):
+                    for _round in range(300):
+                        # ۱) اطمینان از فعال بودنِ جستجو (کوئری حفظ شده باشد)
+                        try:
+                            sb = await _first_selector(page, SEARCH_SELECTORS, timeout=4_000)
+                            if sb:
+                                try:
+                                    cur = (await sb.input_value()) or ""
+                                except Exception:
+                                    cur = ""
+                                if cur.strip() != query:
+                                    await sb.click()
+                                    await sb.fill(query)
+                                    await page.keyboard.press("Enter")
+                                    await asyncio.sleep(2)
+                                else:
+                                    await sb.click()
+                                    await asyncio.sleep(0.3)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            pass
+
+                        # ۲) جمع‌آوریِ تازهٔ ردیف‌های گروهِ «پیام‌ها»
                         try:
                             rows = await page.evaluate(_JS_COLLECT_RESULTS)
                         except asyncio.CancelledError:
@@ -574,65 +636,61 @@ async def _search_one(account: dict, query: str,
                             rows = []
                             print(f"collect error: {e}")
 
-                        new_in_round = 0
+                        # ۳) اولین ردیفِ دیده‌نشده
+                        target = None
                         for row in rows:
                             title   = (row.get('title') or '').strip()
                             snippet = (row.get('subtitle') or '').strip()
                             rdate   = (row.get('time') or '').strip()
-                            mid     = str(row.get('mid') or '')
-                            key = (title, snippet, rdate, mid)
+                            key = (title, snippet, rdate)
                             if not snippet or key in seen:
                                 continue
-                            seen.add(key)
-                            new_in_round += 1
+                            target = (row, title, snippet, rdate, key)
+                            break
 
-                            # کلیک روی نتیجه → پرش به پیام در چت
+                        if target is None:
+                            # چیزی برای پردازش نمانده → اسکرول برای بارگذاریِ بیشتر
                             try:
-                                await page.click(f'[data-basir-idx="{row["idx"]}"]', timeout=8000)
+                                moved = await page.evaluate(_JS_SCROLL_RESULTS)
                             except asyncio.CancelledError:
                                 raise
-                            except Exception as e:
-                                print(f"row click failed: {e}")
-                                continue
-                            await asyncio.sleep(2)
+                            except Exception:
+                                moved = 0
+                            await asyncio.sleep(1.2)
+                            no_progress += 1
+                            if no_progress >= 4:
+                                break
+                            continue
 
-                            msg_details = await _extract_message_details(page, mid, snippet)
-                            newMessage = {
-                                'Title':   title,
-                                'Date':    rdate,
-                                'Content': snippet,
-                                'full_content':    msg_details.get('full_content', ''),
-                                'reactions':       msg_details.get('reactions', []),
-                                'total_reactions': msg_details.get('total_reactions', 0),
-                                'views':           msg_details.get('views', ''),
-                                'datetime_full':   msg_details.get('datetime_full', ''),
-                                'message_link':    msg_details.get('message_link', ''),
-                            }
-                            MessageTemp.append(newMessage)
-                            print(f"[Basir] Details: views={newMessage['views']}, "
-                                  f"reactions={newMessage['total_reactions']}")
+                        row, title, snippet, rdate, key = target
+                        seen.add(key)
+                        no_progress = 0
 
-                        # ── اسکرول برای بارگذاریِ نتایجِ بیشتر ──────────────
+                        # کلیک روی نتیجه → پرش به پیام در چت
                         try:
-                            moved = await page.evaluate(_JS_SCROLL_RESULTS)
+                            await page.click(f'[data-basir-idx="{row["idx"]}"]', timeout=8_000)
                         except asyncio.CancelledError:
                             raise
-                        except Exception:
-                            moved = 0
-                        await asyncio.sleep(1.2)
+                        except Exception as e:
+                            print(f"row click failed: {e}")
+                            continue
+                        await asyncio.sleep(2.2)
 
-                        if new_in_round == 0:
-                            tryAttempt += 1
-                        else:
-                            tryAttempt = 0
-                        if not moved or moved <= 0:
-                            stale_scrolls += 1
-                        else:
-                            stale_scrolls = 0
-
-                        # هیچ نتیجهٔ جدیدی نیامد و اسکرول هم به انتها رسید → پایان
-                        if tryAttempt >= 3 and stale_scrolls >= 3:
-                            break
+                        msg_details = await _extract_message_details(page, "", snippet)
+                        newMessage = {
+                            'Title':   title,
+                            'Date':    rdate,
+                            'Content': snippet,
+                            'full_content':    msg_details.get('full_content', ''),
+                            'reactions':       msg_details.get('reactions', []),
+                            'total_reactions': msg_details.get('total_reactions', 0),
+                            'views':           msg_details.get('views', ''),
+                            'datetime_full':   msg_details.get('datetime_full', ''),
+                            'message_link':    msg_details.get('message_link', ''),
+                        }
+                        MessageTemp.append(newMessage)
+                        print(f"[Basir] Details: views={newMessage['views']}, "
+                              f"reactions={newMessage['total_reactions']}")
 
                     # ── فیلتر تاریخ + ساخت خروجی ─────────────────────────────
                     for Message in MessageTemp:

@@ -15,11 +15,13 @@
 background thread فقط در workerی که start_login رو گرفته اجرا میشه.
 بقیه worker ها فقط فایل‌ها رو می‌خونن/می‌نویسن.
 
-── نکتهٔ پلتفرم ───────────────────────────────────────────────────────────────
-وب روبیکا (web.rubika.ir) یک کلاینت مبتنی بر Telegram Web K است، پس مسیر
-ورود دو مرحله دارد: صفحهٔ شماره (.page-sign) و صفحهٔ کد تأیید (.page-authCode).
-گاهی ابتدا صفحهٔ QR (.page-signQR) نمایش داده می‌شود که باید روی گزینهٔ
-«ورود با شماره تلفن» کلیک کرد.
+── نکتهٔ پلتفرم (سلکتورهای واقعی) ──────────────────────────────────────────────
+وب روبیکا (web.rubika.ir) یک اپلیکیشن Angular است. مسیر ورود دو مرحله دارد:
+  ۱) صفحهٔ شماره: input[name="phone_number"] + دکمهٔ «بعدی» (button.btn-primary)
+     توجه: یک input.input-field-input دیگر (نمایش کشور «ایران») disabled است؛
+     نباید سراغش رفت — علت خطای «element is not enabled» در نسخهٔ قبلی همین بود.
+  ۲) صفحهٔ کد: input[name="phone_code"] — با کامل شدن تعداد ارقام، خودکار وارد می‌شود.
+کشور پیش‌فرض +98 است، پس شماره باید بدون کد کشور و بدون صفرِ ابتدایی وارد شود.
 """
 
 import asyncio
@@ -71,55 +73,38 @@ _USER_AGENT = (
     "Chrome/124.0.0.0 Safari/537.36"
 )
 
-# نشانه‌های لاگین موفق (صفحهٔ اصلی چت‌ها)
+# نشانه‌های لاگین موفق (چیدمان اصلی چت‌ها بعد از ورود)
 LOGGED_IN_SELECTORS = [
-    "#column-center",
-    "#column-left .chatlist",
     ".chatlist-container",
+    ".chats-container",
+    ".chatlist-chat",
     ".chatlist",
-    ".sidebar-header .input-search-input",
-    "#column-left",
+    ".main-columns",
+    "#column-left .input-search-input",
+    ".sidebar-search .input-search-input",
 ]
 
-# دکمهٔ «ورود با شماره تلفن» در صفحهٔ QR
-PHONE_SWITCH_SELECTORS = [
-    ".page-signQR .btn-primary",
-    "button:has-text('شماره')",
-    "button:has-text('تلفن')",
-    "button:has-text('phone' i)",
-    "a:has-text('شماره')",
-]
-
-# فیلد شمارهٔ تلفن (صفحهٔ .page-sign)
+# فیلد شمارهٔ تلفن — دقیقاً input فعال (نه فیلد کشورِ disabled)
 PHONE_SELECTORS = [
-    ".page-sign .input-field-input",
-    "input[type='tel']",
-    ".input-field-phone .input-field-input",
-    "input[placeholder*='شماره']",
-    "input[placeholder*='phone' i]",
-    "input[inputmode='tel']",
+    "input[name='phone_number']",
+    "input.input-field-input[type='tel']:not([disabled])",
+    "input[type='tel']:not([name='phone_country']):not([disabled])",
 ]
 
-# فیلد کد تأیید (صفحهٔ .page-authCode)
+# فیلد کد تأیید
 OTP_SELECTORS = [
-    ".page-authCode .input-field-input",
-    ".login-phone-code-input-field input",
-    ".input-field-code input",
-    "input[inputmode='numeric']",
-    "input[type='number']",
-    "input[maxlength='5']",
-    "input[maxlength='6']",
-    "input[placeholder*='کد']",
-    "input[placeholder*='code' i]",
+    "input[name='phone_code']",
+    ".login-phone-code-input-field input:not([disabled])",
+    ".input-field-code input:not([disabled])",
 ]
 
+# دکمهٔ «بعدی» بعد از وارد کردن شماره
 NEXT_BTN_SELECTORS = [
-    ".page-sign .btn-primary",
+    "button.btn-primary:has-text('بعدی')",
+    "button.btn-primary:has-text('ادامه')",
+    "button.btn-primary:has-text('تایید')",
+    "button.btn-primary",
     "button[type='submit']",
-    "button:has-text('ادامه')",
-    "button:has-text('بعدی')",
-    "button:has-text('تایید')",
-    "button:has-text('Next')",
 ]
 
 ST_STARTING  = "starting"
@@ -152,17 +137,28 @@ def _ensure_loop() -> asyncio.AbstractEventLoop:
 
 
 async def _first_visible(page, selectors, timeout=8_000):
-    """اولین سلکتوری که در بازهٔ timeout ظاهر شود را برمی‌گرداند (یا None)."""
+    """اولین سلکتوری که visible و enabled شود را برمی‌گرداند (یا None)."""
     for sel in selectors:
         try:
-            el = await page.wait_for_selector(sel, timeout=timeout)
-            if el:
+            el = await page.wait_for_selector(sel, timeout=timeout, state="visible")
+            if el and await el.is_enabled():
                 return el
         except PwTimeout:
             continue
         except Exception:
             continue
     return None
+
+
+def _normalize_phone(phone: str) -> str:
+    """شماره را برای فیلد روبیکا آماده می‌کند: فقط ارقام، بدون کد کشور و صفرِ ابتدایی."""
+    digits = "".join(ch for ch in str(phone) if ch.isdigit())
+    if digits.startswith("0098"):
+        digits = digits[4:]
+    elif digits.startswith("98") and len(digits) > 10:
+        digits = digits[2:]
+    digits = digits.lstrip("0")
+    return digits
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -195,35 +191,26 @@ async def _do_login(account: dict) -> None:
             await page.goto(RUBIKA_URL, wait_until="domcontentloaded", timeout=30_000)
             await asyncio.sleep(3)
 
-            # ── اگر صفحهٔ QR بود، به ورود با شماره سوییچ کن ────────────
-            phone_el = await _first_visible(page, PHONE_SELECTORS, timeout=5_000)
-            if not phone_el:
-                switch = await _first_visible(page, PHONE_SWITCH_SELECTORS, timeout=5_000)
-                if switch:
-                    try:
-                        await switch.click()
-                        await asyncio.sleep(1.5)
-                    except Exception:
-                        pass
-                phone_el = await _first_visible(page, PHONE_SELECTORS, timeout=8_000)
-
+            # ── پیدا کردن فیلد شماره (input فعال، نه فیلد کشورِ disabled) ──
+            phone_el = await _first_visible(page, PHONE_SELECTORS, timeout=15_000)
             if not phone_el:
                 _write_state(account_id, ST_ERROR,
                              error="فیلد شماره تلفن پیدا نشد. دوباره تلاش کنید.")
                 await ctx.close()
                 return
 
-            # ── وارد کردن شماره ─────────────────────────────────────────
+            # ── وارد کردن شماره (بدون کد کشور و بدون صفرِ ابتدایی) ────────
             _write_state(account_id, ST_PHONE, "در حال وارد کردن شماره...")
+            phone_norm = _normalize_phone(phone)
             await phone_el.click()
             try:
                 await phone_el.fill("")
             except Exception:
                 pass
-            await phone_el.type(phone, delay=40)
+            await phone_el.fill(phone_norm)
             await asyncio.sleep(0.6)
-            # tweb با معتبر شدن شماره دکمهٔ ادامه را نشان می‌دهد؛ هم دکمه هم Enter
-            next_btn = await _first_visible(page, NEXT_BTN_SELECTORS, timeout=4_000)
+            # دکمهٔ «بعدی» با معتبر شدن شماره فعال می‌شود
+            next_btn = await _first_visible(page, NEXT_BTN_SELECTORS, timeout=5_000)
             if next_btn:
                 try:
                     await next_btn.click()
