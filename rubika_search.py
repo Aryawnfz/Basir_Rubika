@@ -83,6 +83,123 @@ _SHORTCODE_RE = re.compile(r':[A-Za-z0-9_+\-]+:')          # اموجی‌های
 _KEEP_LETTERS_RE = re.compile(r'[^A-Za-z\u0600-\u06FF]')   # فقط حروفِ لاتین و عربی/فارسی
 _AR_DIGIT_PUNCT_RE = re.compile(r'[\u0660-\u0669\u06F0-\u06F9\u060C\u061B\u061F\u066A-\u066D\u200c]')
 
+# ── نگاشتِ نام‌کوتاهِ اموجی → کاراکترِ واقعیِ یونیکد ────────────────────────────
+# رابیکا (مثل خیلی از وب‌اپ‌های مبتنیِ tweb) برای اموجی‌های سفارشی/ری‌اکشن‌ها به‌جای
+# کاراکترِ واقعی، فقط یک نامِ کوتاه (مثلاً «heart» یا «:red_circle:») در DOM
+# می‌گذارد — همان چیزی که هنگامِ استخراجِ متن (textContent) به‌جای خودِ اموجی
+# گرفته می‌شود. این دیکشنری رایج‌ترین نام‌کوتاه‌ها (هم‌راستا با استانداردِ
+# Slack/Discord/GitHub) را به کاراکترِ واقعیِ اموجی تبدیل می‌کند.
+_EMOJI_SHORTCODES: dict[str, str] = {
+    # لبخند / صورت‌ها
+    "grinning": "😀", "smiley": "😃", "smile": "😄", "grin": "😁",
+    "laughing": "😆", "satisfied": "😆", "sweat_smile": "😅", "rofl": "🤣",
+    "rolling_on_the_floor_laughing": "🤣", "joy": "😂", "slightly_smiling_face": "🙂",
+    "upside_down_face": "🙃", "wink": "😉", "blush": "😊", "innocent": "😇",
+    "smiling_face_with_three_hearts": "🥰", "heart_eyes": "😍", "star_struck": "🤩",
+    "kissing_heart": "😘", "kissing": "😗", "kissing_smiling_eyes": "😙",
+    "kissing_closed_eyes": "😚", "yum": "😋", "stuck_out_tongue": "😛",
+    "stuck_out_tongue_winking_eye": "😜", "zany_face": "🤪",
+    "stuck_out_tongue_closed_eyes": "😝", "money_mouth_face": "🤑", "hugs": "🤗",
+    "hand_over_mouth": "🤭", "shushing_face": "🤫", "thinking": "🤔",
+    "zipper_mouth_face": "🤐", "raised_eyebrow": "🤨", "neutral_face": "😐",
+    "expressionless": "😑", "no_mouth": "😶", "smirk": "😏", "unamused": "😒",
+    "roll_eyes": "🙄", "grimacing": "😬", "lying_face": "🤥", "relieved": "😌",
+    "pensive": "😔", "sleepy": "😪", "drooling_face": "🤤", "sleeping": "😴",
+    "mask": "😷", "face_with_thermometer": "🤒", "face_with_head_bandage": "🤕",
+    "nauseated_face": "🤢", "vomiting_face": "🤮", "sneezing_face": "🤧",
+    "hot_face": "🥵", "cold_face": "🥶", "woozy_face": "🥴", "dizzy_face": "😵",
+    "exploding_head": "🤯", "cowboy_hat_face": "🤠", "partying_face": "🥳",
+    "sunglasses": "😎", "nerd_face": "🤓", "monocle_face": "🧐", "confused": "😕",
+    "worried": "😟", "slightly_frowning_face": "🙁", "frowning_face": "☹️",
+    "open_mouth": "😮", "hushed": "😯", "astonished": "😲", "flushed": "😳",
+    "pleading_face": "🥺", "frowning": "😦", "anguished": "😧", "fearful": "😨",
+    "cold_sweat": "😰", "disappointed_relieved": "😥", "cry": "😢", "sob": "😭",
+    "scream": "😱", "confounded": "😖", "persevere": "😣", "disappointed": "😞",
+    "sweat": "😓", "weary": "😩", "tired_face": "😫", "yawning_face": "🥱",
+    "triumph": "😤", "rage": "😡", "pout": "😡", "angry": "😠", "cursing_face": "🤬",
+    "smiling_imp": "😈", "imp": "👿", "skull": "💀", "skull_and_crossbones": "☠️",
+    "hankey": "💩", "poop": "💩", "shit": "💩", "clown_face": "🤡", "japanese_ogre": "👹",
+    "japanese_goblin": "👺", "ghost": "👻", "alien": "👽", "robot": "🤖",
+    # قلب‌ها
+    "heart": "❤️", "red_heart": "❤️", "orange_heart": "🧡", "yellow_heart": "💛",
+    "green_heart": "💚", "blue_heart": "💙", "purple_heart": "💜",
+    "black_heart": "🖤", "white_heart": "🤍", "brown_heart": "🤎",
+    "broken_heart": "💔", "heavy_heart_exclamation": "❣️", "two_hearts": "💕",
+    "revolving_hearts": "💞", "heartbeat": "💓", "heartpulse": "💗",
+    "sparkling_heart": "💖", "cupid": "💘", "gift_heart": "💝",
+    "heart_decoration": "💟", "mending_heart": "❤️‍🩹", "fire_heart": "❤️‍🔥",
+    # دست‌ها / اشاره‌ها
+    "clap": "👏", "raised_hands": "🙌", "open_hands": "👐", "handshake": "🤝",
+    "pray": "🙏", "wave": "👋", "ok_hand": "👌", "pinched_fingers": "🤌",
+    "pinching_hand": "🤏", "v": "✌️", "crossed_fingers": "🤞", "love_you_gesture": "🤟",
+    "metal": "🤘", "call_me_hand": "🤙", "point_left": "👈", "point_right": "👉",
+    "point_up_2": "👆", "point_down": "👇", "point_up": "☝️", "raised_hand": "✋",
+    "thumbsup": "👍", "+1": "👍", "thumbsdown": "👎", "-1": "👎", "fist": "✊",
+    "facepunch": "👊", "punch": "👊", "muscle": "💪", "writing_hand": "✍️",
+    "nail_care": "💅", "selfie": "🤳",
+    # نمادها/اشکال
+    "red_circle": "🔴", "orange_circle": "🟠", "yellow_circle": "🟡",
+    "green_circle": "🟢", "blue_circle": "🔵", "purple_circle": "🟣",
+    "brown_circle": "🟤", "black_circle": "⚫", "white_circle": "⚪",
+    "red_square": "🟥", "orange_square": "🟧", "yellow_square": "🟨",
+    "green_square": "🟩", "blue_square": "🟦", "purple_square": "🟪",
+    "brown_square": "🟫", "black_large_square": "⬛", "white_large_square": "⬜",
+    "small_blue_diamond": "🔹", "small_orange_diamond": "🔸",
+    "large_blue_diamond": "🔷", "large_orange_diamond": "🔶",
+    "diamond_shape_with_a_dot_inside": "💠", "gem": "💎",
+    "star": "⭐", "star2": "🌟", "sparkles": "✨", "boom": "💥", "collision": "💥",
+    "fire": "🔥", "zap": "⚡", "cyclone": "🌀", "dizzy": "💫", "anger": "💢",
+    "exclamation": "❗", "heavy_exclamation_mark": "❗", "question": "❓",
+    "grey_exclamation": "❕", "grey_question": "❔", "bangbang": "‼️",
+    "interrobang": "⁉️", "warning": "⚠️", "no_entry": "⛔",
+    "checkmark": "✔️", "heavy_check_mark": "✔️", "white_check_mark": "✅",
+    "x": "❌", "negative_squared_cross_mark": "❎", "100": "💯", "hundred": "💯",
+    # سایر پرکاربرد
+    "tada": "🎉", "confetti_ball": "🎊", "trophy": "🏆", "medal": "🏅",
+    "eyes": "👀", "eye": "👁️", "tongue": "👅", "lips": "👄", "kiss": "💋",
+    "speech_balloon": "💬", "thought_balloon": "💭", "zzz": "💤",
+    "sun": "☀️", "sunny": "☀️", "moon": "🌙", "crescent_moon": "🌙",
+    "cloud": "☁️", "rainbow": "🌈", "snowflake": "❄️", "droplet": "💧",
+    "ocean": "🌊", "balloon": "🎈", "gift": "🎁", "bell": "🔔",
+    "musical_note": "🎵", "notes": "🎶", "rocket": "🚀", "airplane": "✈️",
+    "car": "🚗", "coffee": "☕", "pizza": "🍕", "hamburger": "🍔",
+    "beer": "🍺", "beers": "🍻", "wine_glass": "🍷", "cake": "🎂",
+    "birthday": "🎂", "rose": "🌹", "sunflower": "🌻", "four_leaf_clover": "🍀",
+    "dog": "🐶", "cat": "🐱", "bird": "🐦", "dove": "🕊️", "unicorn": "🦄",
+}
+
+
+def _shortcode_to_emoji(name: str) -> str | None:
+    key = (name or "").strip().strip(":").strip().lower().replace("-", "_").replace(" ", "_")
+    return _EMOJI_SHORTCODES.get(key)
+
+
+def emojify(text: str) -> str:
+    """
+    نام‌کوتاه‌های اموجی که به‌جای خودِ اموجی از DOM استخراج شده‌اند (مثلاً
+    «:red_circle:» یا حتی فقط «heart»/«fire» بدون دو نقطه) را به کاراکترِ
+    واقعیِ اموجی تبدیل می‌کند. اگر نام‌کوتاه در دیکشنری نبود، فقط دو نقطه‌ها
+    حذف می‌شوند تا حداقل شکلِ خام «:something:» به چشم نیاید.
+    """
+    if not text:
+        return text
+
+    def _replace_colon_form(m: re.Match) -> str:
+        emoji = _shortcode_to_emoji(m.group(0))
+        return emoji if emoji else m.group(0).strip(":")
+
+    text = _SHORTCODE_RE.sub(_replace_colon_form, text)
+
+    # حالتِ بدونِ دو نقطه (مثلاً ری‌اکشنی که alt/title متنش فقط «heart» است) —
+    # فقط وقتی کلِ رشته دقیقاً یک نام‌کوتاهِ شناخته‌شده باشد تبدیل می‌شود، تا
+    # کلماتِ عادیِ متنِ پیام (مثل جملاتی که تصادفاً شامل واژهٔ «fire» هستند)
+    # دست‌نخورده بمانند.
+    bare = _shortcode_to_emoji(text)
+    if bare:
+        return bare
+
+    return text
+
 
 def _normalize(s: str) -> str:
     """
@@ -259,15 +376,37 @@ _JS_EXTRACT_BUBBLE = r"""
     }
   }
 
-  return {content, reactions, views, time};
+  // تاریخِ دقیقِ پیام: نزدیک‌ترین جداکنندهٔ تاریخِ خدماتی که پیش از این حباب آمده
+  // (مثلاً «دوشنبه، ۲۹ تیر ۱۴۰۵»). این جداکننده‌ها .bubble.service/.is-date هستند.
+  let date = '';
+  const svcs = [...document.querySelectorAll('.bubble.service, .bubble.is-date, .is-date .service-msg, .bubble.service .service-msg')];
+  for (const s of svcs) {
+    // اگر حباب بعد از s باشد، s پیش از حباب است → کاندید (آخرین کاندید = نزدیک‌ترین)
+    if (s.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING) {
+      const t = (s.textContent || '').replace(/\s+/g, ' ').trim();
+      if (t) date = t;
+    } else {
+      break;
+    }
+  }
+
+  return {content, reactions, views, time, date};
 }
 """
 
-# متن گزینهٔ «رونوشت لینک پیام» در منوی کلیک‌راست را کلیک می‌کند (کانال‌ها).
+# گزینهٔ «کپی کردن لینک پیام» در منوی کلیک‌راست روبیکا را کلیک می‌کند (کانال‌ها).
+# در DOM واقعیِ روبیکا این آیتم کلاسِ .rbico-link دارد و متنش «کپی کردن لینک پیام»
+# است (نه «رونوشت لینک»). اول با کلاس، بعد با متن پیدا می‌شود.
 _JS_COPY_LINK = r"""
 () => {
-  const wanted = ['رونوشت لینک', 'کپی لینک', 'رونوشت پیوند', 'کپی پیوند', 'Copy Link', 'Copy Message Link'];
+  const wanted = ['کپی کردن لینک پیام', 'کپی لینک پیام', 'لینک پیام',
+                  'رونوشت لینک', 'کپی لینک', 'کپی کردن لینک',
+                  'Copy Link', 'Copy Message Link'];
   const items = [...document.querySelectorAll('.btn-menu-item, .menu-item, [role=menuitem]')];
+  // اولویت با کلاسِ صریحِ rbico-link
+  for (const it of items) {
+    if (it.classList && it.classList.contains('rbico-link')) { it.click(); return true; }
+  }
   for (const it of items) {
     const t = (it.textContent || '').trim();
     if (wanted.some(w => t.includes(w))) { it.click(); return true; }
@@ -302,6 +441,7 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
         'total_reactions': 0,
         'views': '',
         'datetime_full': '',
+        'msg_date': '',
         'message_link': '',
     }
 
@@ -325,14 +465,27 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
         print(f"[Basir] محتوای نامنطبق با نتیجه — دور ریخته شد: {snippet[:40]}")
         return details
 
-    details['full_content'] = full_content or snippet
+    details['full_content'] = emojify(full_content or snippet)
     reactions = data.get('reactions', []) or []
+    for r in reactions:
+        r['emoji'] = emojify((r.get('emoji') or '').strip())
     details['reactions'] = reactions
     details['total_reactions'] = sum(_parse_count(r.get('count', '0')) for r in reactions)
     details['views'] = data.get('views', '') or ''
-    details['datetime_full'] = data.get('time', '') or ''
 
-    # تلاشِ اختیاری برای گرفتنِ لینکِ پیام (کانال‌ها) از منوی کلیک‌راست
+    # تاریخ و زمانِ دقیقِ پیام
+    msg_time = (data.get('time', '') or '').strip()
+    msg_date = (data.get('date', '') or '').strip()
+    details['msg_date'] = msg_date
+    if msg_date and msg_time:
+        details['datetime_full'] = f"{msg_date} - {msg_time}"
+    else:
+        details['datetime_full'] = msg_date or msg_time
+
+    # لینکِ پیام (کانال‌ها) از منوی کلیک‌راست → گزینهٔ «کپی کردن لینک پیام».
+    # مهم: باید با کلیکِ واقعیِ Playwright روی آیتم منو زده شود، نه با
+    # element.click() در JS؛ چون نوشتنِ کلیپ‌بوردِ روبیکا به یک user-gesture
+    # معتبر نیاز دارد و کلیکِ برنامه‌ایِ JS آن را بی‌صدا مسدود می‌کند.
     try:
         bubble = await page.query_selector('.bubble[data-basir-target="1"] .bubble-content')
         if bubble is None:
@@ -340,15 +493,31 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
         if bubble is not None and await bubble.is_visible():
             await bubble.click(button="right", timeout=4000)
             await asyncio.sleep(0.6)
-            clicked = await page.evaluate(_JS_COPY_LINK)
-            if clicked:
+            item = await page.query_selector('.btn-menu-item.rbico-link')
+            if item is None:
+                for it in await page.query_selector_all('.btn-menu-item, .menu-item, [role=menuitem]'):
+                    try:
+                        t = (await it.text_content() or '').strip()
+                    except Exception:
+                        t = ''
+                    if 'لینک پیام' in t or 'کپی کردن لینک' in t or 'رونوشت لینک' in t:
+                        item = it
+                        break
+            if item is not None:
+                await item.click(timeout=4000)
                 await asyncio.sleep(0.6)
-                try:
-                    link = await page.evaluate("() => navigator.clipboard.readText()")
-                except Exception:
-                    link = ""
+                link = ""
+                for _ in range(6):
+                    try:
+                        link = await page.evaluate(
+                            "async () => { try { return await navigator.clipboard.readText(); } catch (e) { return ''; } }")
+                    except Exception:
+                        link = ""
+                    if link and 'rubika' in link:
+                        break
+                    await asyncio.sleep(0.4)
                 if link and 'rubika' in link:
-                    details['message_link'] = link
+                    details['message_link'] = link.strip()
             else:
                 await page.keyboard.press("Escape")
     except Exception:
@@ -470,6 +639,10 @@ def parse_rubika_date(date_str: str) -> date | None:
 
     s = _to_latin_digits(date_str.strip())
     s = s.strip('()').strip()
+    # حذفِ پیشوندِ روزِ هفته + ویرگول (مثلاً «دوشنبه، ۲۹ تیر ۱۴۰۵» → «۲۹ تیر ۱۴۰۵»)
+    s = re.sub(
+        r'^\s*(شنبه|یکشنبه|دوشنبه|سه‌شنبه|سه\s*شنبه|چهارشنبه|پنجشنبه|جمعه)\s*[،,]?\s*',
+        '', s).strip()
     today = date.today()
 
     m = re.match(r'^(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})$', s)
@@ -677,9 +850,12 @@ async def _search_one(account: dict, query: str,
                         await asyncio.sleep(2.2)
 
                         msg_details = await _extract_message_details(page, "", snippet)
+                        # تاریخِ دقیقِ حباب را ترجیح می‌دهیم (جداکنندهٔ تاریخِ چت)؛
+                        # اگر نبود، به زمانِ ردیفِ نتیجه برمی‌گردیم.
+                        exact_date = (msg_details.get('msg_date') or '').strip()
                         newMessage = {
                             'Title':   title,
-                            'Date':    rdate,
+                            'Date':    exact_date or rdate,
                             'Content': snippet,
                             'full_content':    msg_details.get('full_content', ''),
                             'reactions':       msg_details.get('reactions', []),
@@ -727,8 +903,8 @@ async def _search_one(account: dict, query: str,
                                 Shamsi = Message.get('Date') or "—"
 
                             results.append({
-                                "channel_name": Message.get('Title'),
-                                "message": Message.get('Content'),
+                                "channel_name": emojify(Message.get('Title')),
+                                "message": emojify(Message.get('Content')),
                                 "date": Shamsi or "—",
                                 "account_name": account["name"],
                                 "account_id": account["id"],

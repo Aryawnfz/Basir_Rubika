@@ -58,6 +58,21 @@ def inject_role():
     """در دسترس قرار دادنِ نقشِ کاربر برای همهٔ قالب‌ها (برای نمایش/مخفی‌کردن منو)."""
     return {"current_role": session.get("role", ""), "ROLE_ADMIN": user_store.ROLE_ADMIN}
 
+
+def _is_admin() -> bool:
+    return session.get("role") == user_store.ROLE_ADMIN
+
+
+def _owns_job(job: dict) -> bool:
+    """
+    مالکیتِ یک job: کاربرِ عادی فقط جستجوهایی را می‌بیند/حذف می‌کند که خودش
+    ثبت کرده (created_by == نام‌کاربری session). فقط مدیرِ اصلی به همهٔ
+    جستجوها دسترسیِ کامل دارد.
+    """
+    if _is_admin():
+        return True
+    return job.get("created_by") == session.get("user")
+
 def _save_results(results):
     os.makedirs(config.DATA_DIR, exist_ok=True)
     with open(config.RESULTS_FILE, "w", encoding="utf-8") as fh:
@@ -125,8 +140,14 @@ def search():
 @app.route("/jobs")
 @login_required
 def jobs_list():
-    """Polling endpoint برای جدول لیست جستجوها — بدون آرایهٔ results (سبک)."""
+    """
+    Polling endpoint برای جدول لیست جستجوها — بدون آرایهٔ results (سبک).
+    کاربرِ عادی فقط جستجوهای خودش را می‌بیند؛ فقط مدیرِ اصلی همهٔ جستجوها
+    را می‌بیند.
+    """
     all_jobs = jobs.list_jobs()
+    if not _is_admin():
+        all_jobs = [j for j in all_jobs if j.get("created_by") == session.get("user")]
     summary = [{k: v for k, v in j.items() if k != "results"} for j in all_jobs]
     return jsonify(summary)
 
@@ -137,6 +158,9 @@ def job_results(job_id):
     job = jobs.get_job(job_id)
     if not job:
         flash("این جستجو دیگر در لیست موجود نیست.", "error")
+        return redirect(url_for("index"))
+    if not _owns_job(job):
+        flash("شما به این جستجو دسترسی ندارید.", "error")
         return redirect(url_for("index"))
     if job["status"] != jobs.ST_DONE:
         flash("نتایج این جستجو هنوز آماده نیست.", "warning")
@@ -158,6 +182,9 @@ def job_export(job_id):
     if not job or not job.get("results"):
         flash("نتیجه‌ای برای خروجی وجود ندارد.", "warning")
         return redirect(url_for("index"))
+    if not _owns_job(job):
+        flash("شما به این جستجو دسترسی ندارید.", "error")
+        return redirect(url_for("index"))
     return send_file(
         generate_excel(job["results"]),
         as_attachment=True,
@@ -173,6 +200,9 @@ def job_stats_export(job_id):
     if not job or not job.get("results"):
         flash("نتیجه‌ای برای آمار وجود ندارد.", "warning")
         return redirect(url_for("index"))
+    if not _owns_job(job):
+        flash("شما به این جستجو دسترسی ندارید.", "error")
+        return redirect(url_for("index"))
     return send_file(
         generate_stats_excel(job["results"], job.get("query", "")),
         as_attachment=True,
@@ -187,7 +217,12 @@ def job_delete(job_id):
     """
     حذف از لیست. اگر job در حال اجراست، ابتدا تلاش می‌کند بلافاصله
     متوقفش کند (مرورگرش بسته شود) و سپس رکورد را از لیست پاک می‌کند.
+
+    کاربرِ عادی فقط جستجوی خودش را می‌تواند حذف کند.
     """
+    job = jobs.get_job(job_id)
+    if job and not _owns_job(job):
+        return jsonify({"ok": False, "error": "شما به این جستجو دسترسی ندارید."}), 403
     job_runner.cancel_job(job_id)
     jobs.delete_job(job_id)
     return jsonify({"ok": True})
@@ -238,7 +273,15 @@ def stats_export():
 @app.route("/jobs/<job_id>/results/delete", methods=["POST"])
 @login_required
 def job_result_delete(job_id):
-    """حذفِ یک پست از نتایجِ یک job — از آمار و خروجی اکسل هم حذف می‌شود."""
+    """
+    حذفِ یک پست از نتایجِ یک job — از آمار و خروجی اکسل هم حذف می‌شود.
+    کاربرِ عادی فقط می‌تواند از نتایجِ جستجوی خودش حذف کند.
+    """
+    job = jobs.get_job(job_id)
+    if not job:
+        return jsonify({"ok": False})
+    if not _owns_job(job):
+        return jsonify({"ok": False, "error": "شما به این جستجو دسترسی ندارید."}), 403
     link  = (request.form.get("link") or "").strip()
     index = request.form.get("index", "")
     try:
