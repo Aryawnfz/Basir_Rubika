@@ -377,14 +377,20 @@ _JS_EXTRACT_BUBBLE = r"""
   }
 
   // تاریخِ دقیقِ پیام: نزدیک‌ترین جداکنندهٔ تاریخِ خدماتی که پیش از این حباب آمده
-  // (مثلاً «دوشنبه، ۲۹ تیر ۱۴۰۵»). این جداکننده‌ها .bubble.service/.is-date هستند.
+  // (مثلاً «دوشنبه، ۲۹ تیر ۱۴۰۵»). فقط پیام‌های خدماتیِ «تاریخ» را می‌پذیریم؛
+  // پیام‌های خدماتیِ دیگر مثل «یک پیام سنجاق شد» نباید به‌جای تاریخ گرفته شوند.
   let date = '';
+  const monthRe = /(فروردین|اردیبهشت|خرداد|تیر|مرداد|شهریور|مهر|آبان|آذر|دی|بهمن|اسفند)/;
+  const relRe = /^(امروز|دیروز|شنبه|یکشنبه|دوشنبه|سه‌شنبه|سه شنبه|چهارشنبه|پنجشنبه|جمعه)/;
+  const isDateText = t =>
+    !!t && !/سنجاق|پین|pinned|حذف|ارتقا|عضو|ترک|تغییر/i.test(t) &&
+    (monthRe.test(t) || relRe.test(t) || /\d{3,4}/.test(t) || /\d{1,2}[/\-]\d{1,2}/.test(t));
   const svcs = [...document.querySelectorAll('.bubble.service, .bubble.is-date, .is-date .service-msg, .bubble.service .service-msg')];
   for (const s of svcs) {
-    // اگر حباب بعد از s باشد، s پیش از حباب است → کاندید (آخرین کاندید = نزدیک‌ترین)
+    // اگر حباب بعد از s باشد، s پیش از حباب است → کاندید (آخرین کاندیدِ تاریخ‌مانند = نزدیک‌ترین)
     if (s.compareDocumentPosition(bubble) & Node.DOCUMENT_POSITION_FOLLOWING) {
       const t = (s.textContent || '').replace(/\s+/g, ' ').trim();
-      if (t) date = t;
+      if (isDateText(t)) date = t;
     } else {
       break;
     }
@@ -473,14 +479,17 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
     details['total_reactions'] = sum(_parse_count(r.get('count', '0')) for r in reactions)
     details['views'] = data.get('views', '') or ''
 
-    # تاریخ و زمانِ دقیقِ پیام
+    # تاریخ و زمانِ دقیقِ پیام — به فرمتِ شمسیِ عادی مثل بله/ایتا: «jy/jm/jd HH:MM»
     msg_time = (data.get('time', '') or '').strip()
     msg_date = (data.get('date', '') or '').strip()
     details['msg_date'] = msg_date
-    if msg_date and msg_time:
-        details['datetime_full'] = f"{msg_date} - {msg_time}"
+    greg = parse_rubika_date(msg_date) if msg_date else None
+    if greg is not None:
+        jy, jm, jd = _gregorian_to_jalali(greg.year, greg.month, greg.day)
+        jalali = f"{jy}/{jm:02d}/{jd:02d}"
+        details['datetime_full'] = f"{jalali} {msg_time}".strip()
     else:
-        details['datetime_full'] = msg_date or msg_time
+        details['datetime_full'] = msg_time
 
     # لینکِ پیام (کانال‌ها) از منوی کلیک‌راست → گزینهٔ «کپی کردن لینک پیام».
     # مهم: باید با کلیکِ واقعیِ Playwright روی آیتم منو زده شود، نه با
