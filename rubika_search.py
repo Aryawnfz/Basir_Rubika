@@ -743,7 +743,7 @@ async def _search_one(account: dict, query: str,
                 try:
                     ctx = await p.chromium.launch_persistent_context(
                         user_data_dir=user_data_dir,
-                        headless=False,
+                        headless=True,
                         args=_CHROME_ARGS,
                         user_agent=_USER_AGENT,
                         viewport={"width": 1280, "height": 800},
@@ -766,6 +766,10 @@ async def _search_one(account: dict, query: str,
 
                     print(f"[Basir] «{account['name']}» — جستجو: {query}")
 
+                    # عبارتِ واردشده داخلِ دو تا دابل‌کوتیشن در کادرِ جستجوی
+                    # رابیکا تایپ می‌شود (نه خودِ عبارتِ خام) — طبق درخواستِ کاربر.
+                    search_query = f'"{query}"'
+
                     # پیدا کردن باکس جستجو
                     search_el = await _first_selector(page, SEARCH_SELECTORS, timeout=12_000)
                     if not search_el:
@@ -773,7 +777,7 @@ async def _search_one(account: dict, query: str,
                         return []
 
                     await search_el.click()
-                    await search_el.fill(query)
+                    await search_el.fill(search_query)
                     await page.keyboard.press("Enter")
                     await asyncio.sleep(3)
                     print("Started Searching ... ")
@@ -796,9 +800,9 @@ async def _search_one(account: dict, query: str,
                                     cur = (await sb.input_value()) or ""
                                 except Exception:
                                     cur = ""
-                                if cur.strip() != query:
+                                if cur.strip() != search_query:
                                     await sb.click()
-                                    await sb.fill(query)
+                                    await sb.fill(search_query)
                                     await page.keyboard.press("Enter")
                                     await asyncio.sleep(2)
                                 else:

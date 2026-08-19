@@ -28,6 +28,7 @@ from config import DATA_DIR
 JOBS_DIR             = os.path.join(DATA_DIR, "jobs")
 SEARCH_LOG_FILE       = os.path.join(DATA_DIR, "search_log.jsonl")
 SEARCH_LOG_RESULTS_FILE = os.path.join(DATA_DIR, "search_log_results.json")
+SEARCH_LOG_ACCOUNTS_FILE = os.path.join(DATA_DIR, "search_log_accounts.json")
 
 ST_QUEUED  = "queued"
 ST_RUNNING = "running"
@@ -96,6 +97,39 @@ def _set_search_log_result_count(job_id: str, result_count: int) -> None:
     os.replace(tmp, SEARCH_LOG_RESULTS_FILE)
 
 
+def _read_search_log_accounts() -> dict:
+    """دیکشنری {job_id: {account_name: count}} — دائمی و مستقل از حذف job."""
+    if not os.path.exists(SEARCH_LOG_ACCOUNTS_FILE):
+        return {}
+    try:
+        with open(SEARCH_LOG_ACCOUNTS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _set_search_log_account_counts(job_id: str, results: list[dict]) -> None:
+    """
+    ثبت دائمیِ سهمِ هر اکانت از نتایجِ این job — برای نمودارِ «سهم مشارکت
+    اکانت‌ها» در گزارش. مثلِ result_count، این هم فقط لحظه‌ی تکمیل‌شدنِ job
+    ثبت می‌شود (نه با حذفِ تک‌تکِ نتایج بعداً) تا با همان فلسفه‌ی
+    search_log_results.json هماهنگ بماند.
+    """
+    counts: dict[str, int] = {}
+    for r in (results or []):
+        name = (r.get("account_name") or "نامشخص").strip() or "نامشخص"
+        counts[name] = counts.get(name, 0) + 1
+    if not counts:
+        return
+    os.makedirs(DATA_DIR, exist_ok=True)
+    data = _read_search_log_accounts()
+    data[job_id] = counts
+    tmp = SEARCH_LOG_ACCOUNTS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, SEARCH_LOG_ACCOUNTS_FILE)
+
+
 def _migrate_existing_jobs_to_log() -> None:
     """
     Migration یک‌باره: اگر search_log.jsonl هنوز وجود ندارد ولی jobهای
@@ -120,6 +154,7 @@ def _migrate_existing_jobs_to_log() -> None:
     old_jobs.sort(key=lambda j: j.get("created_at", 0))
     os.makedirs(DATA_DIR, exist_ok=True)
     result_counts = _read_search_log_results()
+    account_counts = _read_search_log_accounts()
     with open(SEARCH_LOG_FILE, "a", encoding="utf-8") as f:
         for job in old_jobs:
             record = {
@@ -131,11 +166,72 @@ def _migrate_existing_jobs_to_log() -> None:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             if job.get("id"):
                 result_counts[job["id"]] = job.get("result_count", 0)
+                counts: dict[str, int] = {}
+                for r in (job.get("results") or []):
+                    name = (r.get("account_name") or "نامشخص").strip() or "نامشخص"
+                    counts[name] = counts.get(name, 0) + 1
+                if counts:
+                    account_counts[job["id"]] = counts
     if result_counts:
         tmp = SEARCH_LOG_RESULTS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(result_counts, f, ensure_ascii=False)
         os.replace(tmp, SEARCH_LOG_RESULTS_FILE)
+    if account_counts:
+        tmp = SEARCH_LOG_ACCOUNTS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(account_counts, f, ensure_ascii=False)
+        os.replace(tmp, SEARCH_LOG_ACCOUNTS_FILE)
+
+
+def _migrate_missing_account_counts() -> None:
+    """
+    Migration مکمل: برخلافِ _migrate_existing_jobs_to_log که فقط یک‌بار (وقتی
+    search_log.jsonl اصلاً وجود نداشت) اجرا می‌شود، این تابع هر بار بررسی
+    می‌کند که آیا رکوردی در لاگ هست که هنوز در search_log_accounts.json سهمِ
+    اکانت‌هایش ثبت نشده — مثلاً چون آن job قبل از اضافه‌شدنِ این قابلیت
+    تکمیل شده بود. اگر فایلِ خودِ job هنوز در data/jobs/ موجود باشد (حذف
+    نشده باشد)، سهمِ اکانت‌ها از رویش محاسبه و برای همیشه ثبت می‌شود. برای
+    jobهایی که قبلاً حذف شده‌اند، دیگر داده‌ای برای بازیابی وجود ندارد.
+    """
+    if not os.path.exists(SEARCH_LOG_FILE):
+        return
+    account_counts = _read_search_log_accounts()
+    job_ids: list[str] = []
+    with open(SEARCH_LOG_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            jid = rec.get("job_id", "")
+            if jid:
+                job_ids.append(jid)
+
+    changed = False
+    for jid in job_ids:
+        if jid in account_counts:
+            continue
+        job = get_job(jid)
+        if not job:
+            continue
+        counts: dict[str, int] = {}
+        for r in (job.get("results") or []):
+            name = (r.get("account_name") or "نامشخص").strip() or "نامشخص"
+            counts[name] = counts.get(name, 0) + 1
+        if counts:
+            account_counts[jid] = counts
+            changed = True
+
+    if changed:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = SEARCH_LOG_ACCOUNTS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(account_counts, f, ensure_ascii=False)
+        os.replace(tmp, SEARCH_LOG_ACCOUNTS_FILE)
 
 
 def list_search_log(limit: int = 0) -> list[dict]:
@@ -152,9 +248,11 @@ def list_search_log(limit: int = 0) -> list[dict]:
     اگر limit>0 باشد، فقط `limit` رکورد آخر (جدیدترین‌ها) برگردانده می‌شود.
     """
     _migrate_existing_jobs_to_log()
+    _migrate_missing_account_counts()
     if not os.path.exists(SEARCH_LOG_FILE):
         return []
     result_counts = _read_search_log_results()
+    account_counts = _read_search_log_accounts()
     records = []
     with open(SEARCH_LOG_FILE, "r", encoding="utf-8") as f:
         for line in f:
@@ -166,6 +264,7 @@ def list_search_log(limit: int = 0) -> list[dict]:
             except json.JSONDecodeError:
                 continue
             rec["result_count"] = result_counts.get(rec.get("job_id", ""), 0)
+            rec["account_counts"] = account_counts.get(rec.get("job_id", ""), {})
             records.append(rec)
     return records[-limit:] if limit else records
 
@@ -203,6 +302,8 @@ def update_job(job_id: str, **fields) -> dict | None:
     # از حذف این job از لیست، درست باقی بماند.
     if "result_count" in fields:
         _set_search_log_result_count(job_id, fields.get("result_count") or 0)
+    if "results" in fields:
+        _set_search_log_account_counts(job_id, fields.get("results") or [])
     return job
 
 
@@ -219,8 +320,8 @@ def get_job(job_id: str) -> dict | None:
 
 def list_jobs(limit: int = 200) -> list[dict]:
     """
-    قدیمی‌ترین jobها اول — تا شماره ردیف هر job ثابت بماند و جستجوهای
-    جدید همیشه در پایین جدول با شماره بعدی اضافه شوند.
+    جدیدترین jobها اول — جستجوی تازه‌ثبت‌شده بالای جدولِ صفحه‌ی اصلی نمایش
+    داده می‌شود، نه پایینِ آن.
     """
     _ensure_dir()
     all_jobs = []
@@ -232,8 +333,8 @@ def list_jobs(limit: int = 200) -> list[dict]:
                 all_jobs.append(json.load(f))
         except Exception:
             continue
-    all_jobs.sort(key=lambda j: j.get("created_at", 0))
-    return all_jobs[-limit:] if limit else all_jobs
+    all_jobs.sort(key=lambda j: j.get("created_at", 0), reverse=True)
+    return all_jobs[:limit] if limit else all_jobs
 
 
 def remove_result(job_id: str, message_link: str = "", index: int = -1) -> bool:
@@ -275,3 +376,28 @@ def delete_job(job_id: str) -> bool:
         except OSError:
             return False
     return False
+
+
+def rename_owner(old_username: str, new_username: str) -> int:
+    """
+    وقتی مدیر نامِ کاربریِ یک کاربر را تغییر می‌دهد، مالکیتِ jobهای قبلیِ او
+    (created_by) هم به‌روزرسانی می‌شود — تا کاربر بعد از تغییرِ نام، دسترسی
+    به جستجوهای قبلیِ خودش را از دست ندهد. تعدادِ jobهای به‌روزشده را
+    برمی‌گرداند.
+    """
+    _ensure_dir()
+    count = 0
+    for fname in os.listdir(JOBS_DIR):
+        if not fname.endswith(".json"):
+            continue
+        path = os.path.join(JOBS_DIR, fname)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                job = json.load(f)
+        except Exception:
+            continue
+        if job.get("created_by") == old_username:
+            job["created_by"] = new_username
+            _write_job(job)
+            count += 1
+    return count

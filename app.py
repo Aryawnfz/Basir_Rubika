@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import time
 from functools import wraps
 
 from flask import (
@@ -17,10 +18,14 @@ import jobs
 import job_runner
 from rubika_search import search_all_accounts, profile_has_data
 from export import generate_excel
-from stats_export import generate_stats_excel
+from stats_export import generate_stats_excel, _compute as _compute_stats, _fmt_int, _fmt_float
+from report_export import generate_report_excel
+from text_highlight import highlight_query, card_excerpt
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
+app.jinja_env.globals["highlight_query"] = highlight_query
+app.jinja_env.globals["card_excerpt"] = card_excerpt
 
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -61,6 +66,16 @@ def inject_role():
 
 def _is_admin() -> bool:
     return session.get("role") == user_store.ROLE_ADMIN
+
+
+def _period_cutoff(period: str) -> float:
+    """مرزِ زمانیِ بازهٔ 'day' | 'week' | 'month'؛ برای بازهٔ نامعتبر/خالی صفر."""
+    now = time.time()
+    return {
+        "day":   now - 86_400,
+        "week":  now - 7 * 86_400,
+        "month": now - 30 * 86_400,
+    }.get(period, 0)
 
 
 def _owns_job(job: dict) -> bool:
@@ -144,12 +159,41 @@ def jobs_list():
     Polling endpoint برای جدول لیست جستجوها — بدون آرایهٔ results (سبک).
     کاربرِ عادی فقط جستجوهای خودش را می‌بیند؛ فقط مدیرِ اصلی همهٔ جستجوها
     را می‌بیند.
+
+    «priority»: جایگاهِ واقعی و سراسریِ هر جستجوی هنوز تمام‌نشده (queued/
+    running) در بینِ همهٔ جستجوهای هنوز تمام‌نشدهٔ کل سامانه — روی همهٔ
+    کاربران، نه فقط همان کاربر. این عمداً روی all_jobs (قبل از فیلترِ
+    دسترسیِ کاربر) محاسبه می‌شود؛ وگرنه کاربرِ عادی چون جستجوهای بقیه را
+    نمی‌بیند، فکر می‌کرد جستجویش همیشه اولویتِ اول است.
+
+    «server_time» هم همراهِ لیست برگردانده می‌شود تا کلاینت بتواند اختلافِ
+    احتمالیِ ساعتِ سرور با ساعتِ واقعیِ کاربر را جبران کند (مثلاً اگر ساعتِ
+    سیستمِ سرور درست تنظیم نشده باشد) — تا «زمان ثبت» همیشه بر اساسِ ساعتِ
+    واقعیِ همین لحظه نمایش داده شود، نه ساعتِ اشتباهِ سرور.
     """
     all_jobs = jobs.list_jobs()
+
+    in_progress = [j for j in all_jobs if j.get("status") in (jobs.ST_QUEUED, jobs.ST_RUNNING)]
+    in_progress.sort(key=lambda j: j.get("created_at", 0))  # قدیمی‌ترین = اولویتِ ۱
+    priority_by_id = {j.get("id"): i + 1 for i, j in enumerate(in_progress)}
+
+    visible_jobs = all_jobs
     if not _is_admin():
-        all_jobs = [j for j in all_jobs if j.get("created_by") == session.get("user")]
-    summary = [{k: v for k, v in j.items() if k != "results"} for j in all_jobs]
-    return jsonify(summary)
+        visible_jobs = [j for j in all_jobs if j.get("created_by") == session.get("user")]
+
+    # فیلترِ بازهٔ زمانیِ لیست (روز/هفته/ماه). اولویتِ صف روی همهٔ jobها
+    # (قبل از این فیلتر) حساب شده، پس این فیلتر آن را به‌هم نمی‌زند.
+    cutoff = _period_cutoff(request.args.get("period", "").strip())
+    if cutoff:
+        visible_jobs = [j for j in visible_jobs if j.get("created_at", 0) >= cutoff]
+
+    summary = []
+    for j in visible_jobs:
+        row = {k: v for k, v in j.items() if k != "results"}
+        row["priority"] = priority_by_id.get(j.get("id"))
+        summary.append(row)
+
+    return jsonify({"jobs": summary, "server_time": time.time()})
 
 
 @app.route("/jobs/<job_id>/results")
@@ -165,13 +209,27 @@ def job_results(job_id):
     if job["status"] != jobs.ST_DONE:
         flash("نتایج این جستجو هنوز آماده نیست.", "warning")
         return redirect(url_for("index"))
+    all_results = job.get("results", [])
+    s = _compute_stats(all_results)
+    quick_stats = {
+        "n": _fmt_int(s["n"]),
+        "total_views": _fmt_int(s["total_views"]),
+        "total_reactions": _fmt_int(s["total_reactions"]),
+        "pos": _fmt_int(s["pos"]),
+        "neg": _fmt_int(s["neg"]),
+        "neu": _fmt_int(s["neu"]),
+        "avg_views": _fmt_float(s["avg_views"]),
+        "avg_reactions": _fmt_float(s["avg_reactions"]),
+        "engagement": f"{s['engagement']:.1f}%",
+    }
     return render_template(
         "results.html",
         job=job,
-        results=job.get("results", []),
+        results=all_results,
         query=job.get("query", ""),
         date_from=job.get("date_from", ""),
         date_to=job.get("date_to", ""),
+        quick_stats=quick_stats,
     )
 
 
@@ -345,14 +403,33 @@ def user_delete(username):
     return redirect(url_for("users_page"))
 
 
+@app.route("/users/edit/<username>", methods=["POST"])
+@admin_required
+def user_edit(username):
+    new_username = request.form.get("username", "").strip()
+    new_password = request.form.get("password", "").strip()
+    ok, msg = user_store.update_user(username, new_username, new_password or None)
+    if ok and new_username and new_username != username:
+        jobs.rename_owner(username, new_username)
+    flash(msg, "success" if ok else "error")
+    return redirect(url_for("users_page"))
+
+
 # ── Accounts ───────────────────────────────────────────────────────────────────
-@app.route("/reports")
-@login_required
-def reports():
+def _build_report(period: str, usernames: list[str] | None = None) -> dict:
+    """
+    محاسبهٔ کاملِ گزارشِ یک بازه — منبعِ واحدِ صفحهٔ /reports و خروجی اکسلِ آن،
+    تا عددهای صفحه و فایل همیشه دقیقاً یکی باشند.
+
+    usernames: اگر داده شود، گزارش فقط شاملِ جستجوهایی می‌شود که created_by
+    آن‌ها در این لیست باشد (فیلترِ «کاربر» — برای کاربرِ عادی همیشه فقط نامِ
+    خودش، برای مدیر هر ترکیبی که از Combo Box بالای صفحه انتخاب کند؛ خالی/
+    None یعنی بدونِ فیلتر = همهٔ کاربران).
+    """
     import time as _time
     from collections import defaultdict
 
-    period = request.args.get("period", "").strip()   # '' | 'day' | 'week' | 'month'
+    period = (period or "").strip()   # '' | 'day' | 'week' | 'month'
 
     # بازه زمانی انتخاب‌شده
     now = _time.time()
@@ -367,6 +444,12 @@ def reports():
     # همیشه شامل تمام جستجوهای ثبت‌شده می‌ماند — حتی اگر از لیست حذف شده باشند.
     all_records = jobs.list_search_log(limit=1000)
     filtered = [r for r in all_records if r.get("created_at", 0) >= cutoff]
+
+    # فیلترِ کاربر: کاربرِ عادی فقط جستجوهای خودش، مدیر هر ترکیبی که از
+    # Combo Box انتخاب کند (خالی/None یعنی بدونِ فیلتر = همهٔ کاربران).
+    if usernames:
+        allowed = set(usernames)
+        filtered = [r for r in filtered if r.get("created_by", "") in allowed]
 
     # ── آمار کلی بازه (دو کادر بالای صفحه) ──────────────────────────────────
     total_searches = len(filtered)
@@ -385,12 +468,110 @@ def reports():
         freq.items(),
         key=lambda kv: (-kv[1]["count"], -kv[1]["last_at"]),
     )
+
+    # ── داده‌ی نمودار ستونی: پرتکرارترین جستجوها (۸ تای اول) ────────────────
+    top_queries = sorted_queries[:8]
+    max_query_count = max((c["count"] for _, c in top_queries), default=0)
+    bar_chart = [
+        {
+            "query": q,
+            "count": c["count"],
+            "pct": round((c["count"] / max_query_count) * 100, 1) if max_query_count else 0,
+        }
+        for q, c in top_queries
+    ]
+
+    # ── داده‌ی نمودار دایره‌ای: سهمِ هر اکانت از کلِ پیام‌های پیداشده ─────────
+    _CHART_COLORS = [
+        "#12a4ff", "#f0c040", "#22d3ee", "#10b981", "#0d84cf",
+        "#f87171", "#5ec4ff", "#a78bfa", "#6ee7b7", "#eab308",
+    ]
+    account_totals: dict[str, int] = defaultdict(int)
+    for r in filtered:
+        for name, cnt in (r.get("account_counts") or {}).items():
+            account_totals[name] += cnt
+
+    total_account_msgs = sum(account_totals.values())
+    sorted_accounts = sorted(account_totals.items(), key=lambda kv: -kv[1])
+
+    account_slices = []
+    cursor = 0.0
+    for i, (name, cnt) in enumerate(sorted_accounts):
+        pct = (cnt / total_account_msgs * 100) if total_account_msgs else 0
+        color = _CHART_COLORS[i % len(_CHART_COLORS)]
+        account_slices.append({
+            "name": name,
+            "count": cnt,
+            "pct": round(pct, 1),
+            "color": color,
+            "start": round(cursor, 3),
+            "end": round(cursor + pct, 3),
+        })
+        cursor += pct
+
+    if account_slices:
+        pie_gradient = ", ".join(
+            f"{s['color']} {s['start']}% {s['end']}%" for s in account_slices
+        )
+    else:
+        pie_gradient = "var(--bg-surface) 0% 100%"
+
+    return {
+        "queries": sorted_queries,
+        "period": period,
+        "total_searches": total_searches,
+        "total_results": total_results,
+        "server_time": now,
+        "bar_chart": bar_chart,
+        "account_slices": account_slices,
+        "pie_gradient": pie_gradient,
+        "total_account_msgs": total_account_msgs,
+    }
+
+
+def _report_usernames() -> tuple[list[str] | None, list[str], list[str]]:
+    """
+    فیلترِ کاربر برای گزارش را برمی‌گرداند: (usernames_for_filter, selected,
+    all_usernames). کاربرِ عادی همیشه فقط نامِ خودش را می‌بیند (و Combo Box
+    اصلاً نشانش داده نمی‌شود)؛ مدیر می‌تواند از Combo Box چند کاربر را
+    هم‌زمان انتخاب کند — انتخابِ خالی یعنی همهٔ کاربران.
+    """
+    if _is_admin():
+        all_usernames = [u.get("username", "") for u in user_store.load_users()]
+        selected = [u for u in request.args.getlist("users") if u in all_usernames]
+        return (selected or None), selected, all_usernames
+    me = session.get("user", "")
+    return [me], [me], []
+
+
+@app.route("/reports")
+@login_required
+def reports():
+    period = request.args.get("period", "").strip()   # '' | 'day' | 'week' | 'month'
+    usernames, selected_users, all_usernames = _report_usernames()
+    report = _build_report(period, usernames)
     return render_template(
         "reports.html",
-        queries=sorted_queries,
-        period=period,
-        total_searches=total_searches,
-        total_results=total_results,
+        **report,
+        is_admin=_is_admin(),
+        selected_users=selected_users,
+        all_usernames=all_usernames,
+    )
+
+
+@app.route("/reports/export")
+@login_required
+def reports_export():
+    """همان گزارشِ فیلترشدهٔ صفحه (بازه + کاربر)، به‌صورت فایل اکسل."""
+    period = request.args.get("period", "").strip()
+    usernames, _selected, _all = _report_usernames()
+    report = _build_report(period, usernames)
+    suffix = period or "all"
+    return send_file(
+        generate_report_excel(report),
+        as_attachment=True,
+        download_name=f"basir_report_{suffix}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 
@@ -470,4 +651,4 @@ def account_finish_login(account_id):
 if __name__ == "__main__":
     os.makedirs(config.DATA_DIR, exist_ok=True)
     os.makedirs(config.PROFILES_DIR, exist_ok=True)
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5001)

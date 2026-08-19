@@ -28,19 +28,66 @@
         <span class="count-label">نتیجه</span>
       </div>
       {% if results %}
-      <a href="{{ url_for('job_export', job_id=job.id) if job else url_for('export') }}" class="btn-export">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        خروجی اکسل
-      </a>
+      <button type="button" class="btn-refresh" onclick="refreshResults(this)" title="به‌روزرسانی اطلاعات">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        به‌روزرسانی
+      </button>
       <a href="{{ url_for('job_stats_export', job_id=job.id) if job else url_for('stats_export') }}" class="btn-stats">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        آمار کلی
+        خروجی آمار کلی
       </a>
       {% endif %}
     </div>
   </div>
 
   {% if results %}
+  <div class="stats-grid-compact">
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">📨</div>
+      <div class="stat-value-sm">{{ quick_stats.n }}</div>
+      <div class="stat-label-sm">تعداد کل پست‌ها</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">👁️</div>
+      <div class="stat-value-sm">{{ quick_stats.total_views }}</div>
+      <div class="stat-label-sm">مجموع بازدیدها</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">❤️</div>
+      <div class="stat-value-sm">{{ quick_stats.total_reactions }}</div>
+      <div class="stat-label-sm">مجموع ری‌اکشن‌ها</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">👍</div>
+      <div class="stat-value-sm">{{ quick_stats.pos }}</div>
+      <div class="stat-label-sm">ری‌اکشن‌های مثبت</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">👎</div>
+      <div class="stat-value-sm">{{ quick_stats.neg }}</div>
+      <div class="stat-label-sm">ری‌اکشن‌های منفی</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">😐</div>
+      <div class="stat-value-sm">{{ quick_stats.neu }}</div>
+      <div class="stat-label-sm">ری‌اکشن‌های خنثی</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">📊</div>
+      <div class="stat-value-sm">{{ quick_stats.avg_views }}</div>
+      <div class="stat-label-sm">میانگین بازدید هر پست</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">🔁</div>
+      <div class="stat-value-sm">{{ quick_stats.avg_reactions }}</div>
+      <div class="stat-label-sm">میانگین ری‌اکشن هر پست</div>
+    </div>
+    <div class="stat-box-sm">
+      <div class="stat-icon-sm">⚡</div>
+      <div class="stat-value-sm">{{ quick_stats.engagement }}</div>
+      <div class="stat-label-sm">نرخ تعامل</div>
+    </div>
+  </div>
   <div class="card-grid">
     {% for result in results %}
     <div class="result-card" id="card-{{ loop.index0 }}">
@@ -59,11 +106,10 @@
 
       <div class="card-body">
         {% set msg = result.full_content if result.full_content else result.message %}
-        {% if msg|length > 220 %}
-          <p class="card-message">{{ msg[:220] }}<span class="ellipsis">...</span></p>
+        {% set exc = card_excerpt(msg, query) %}
+        <p class="card-message">{{ highlight_query(exc.text, query) if exc.text else '—' }}{% if exc.truncated %}<span class="ellipsis">...</span>{% endif %}</p>
+        {% if exc.truncated %}
           <button class="btn-more" onclick="openModal({{ loop.index0 }})">نمایش بیشتر ↓</button>
-        {% else %}
-          <p class="card-message">{{ msg if msg else '—' }}</p>
         {% endif %}
       </div>
 
@@ -132,7 +178,7 @@
       <button class="modal-close" onclick="closeModal({{ loop.index0 }})">✕</button>
     </div>
     <div class="modal-body">
-      <p>{{ result.full_content if result.full_content else result.message }}</p>
+      <p>{{ highlight_query(result.full_content if result.full_content else result.message, query) }}</p>
       {% if result.reactions or result.views %}
       <div class="modal-stats">
         {% if result.views %}<span class="stat-item">بازدید: {{ result.views }}</span>{% endif %}
@@ -167,8 +213,14 @@
 <script>
 const DELETE_URL = "{{ url_for('job_result_delete', job_id=job.id) if job else url_for('session_result_delete') }}";
 
+function refreshResults(btn) {
+  btn.disabled = true;
+  btn.classList.add('spinning');
+  window.location.reload();
+}
+
 async function removeResult(btn, id) {
-  if (!confirm('این پست از لیست نتایج، آمار کلی و خروجی اکسل حذف شود؟')) return;
+  if (!(await window.showConfirm('حذف پست', 'این پست از لیست نتایج، آمار کلی و خروجی اکسل حذف شود؟'))) return;
   btn.disabled = true;
   const form = new FormData();
   form.append('link', btn.dataset.link || '');

@@ -9,6 +9,17 @@
 const POLL_MS = 2000;
 let _timer    = null;
 
+// اختلافِ ساعتِ سرور با ساعتِ واقعیِ مرورگر (server_time - Date.now()/1000).
+// اگر ساعتِ سیستمِ سرور اشتباه تنظیم شده باشد، این مقدار همان خطاست؛ با کم
+// کردنش از هر created_at، به‌جای ساعتِ (احتمالاً اشتباهِ) سرور، ساعتِ واقعیِ
+// همین لحظه (بر اساسِ ساعتِ خودِ کاربر) نمایش داده می‌شود.
+let _clockSkew = 0;
+
+// بازهٔ زمانیِ انتخاب‌شده برای لیست: '' | 'day' | 'week' | 'month'.
+// فیلتر سمتِ سرور اعمال می‌شود؛ اینجا فقط نگه داشته می‌شود تا با رفرش هم باقی بماند.
+const PERIOD_KEY = 'basirJobsPeriod';
+let _period = '';
+
 // نگه‌داری آخرین وضعیت شناخته‌شده هر job — برای تشخیص تغییر بدون لمس DOM
 const _knownStates = new Map(); // job_id → { status, result_count }
 
@@ -36,7 +47,8 @@ function formatFilter(job) {
 function formatTime(ts) {
   if (!ts) return '—';
   try {
-    const d  = new Date(ts * 1000);
+    const adjusted = ts - _clockSkew;   // جبرانِ اختلافِ ساعتِ سرور با ساعتِ واقعی
+    const d  = new Date(adjusted * 1000);
     const j  = Jalali.toJalali(d.getFullYear(), d.getMonth() + 1, d.getDate());
     const hh = Jalali.pd(String(d.getHours()).padStart(2, '0'));
     const mm = Jalali.pd(String(d.getMinutes()).padStart(2, '0'));
@@ -54,7 +66,10 @@ function buildStatusHTML(job) {
     const msg = escapeHtml(job.error || 'خطای نامشخص');
     return `<span class="job-status job-status-error" title="${msg}">⚠️ خطا</span>`;
   }
-  return `<span class="job-status job-status-running"><span class="job-spinner"></span> در حال جستجو</span>`;
+  // priority = جایگاهِ واقعی و سراسریِ این job در بینِ همه‌ی جستجوهای هنوز
+  // تمام‌نشده (روی همه‌ی کاربران) — نه فقط بینِ جستجوهای همین کاربر.
+  const p = (typeof job.priority === 'number' && job.priority > 0) ? ` (${job.priority})` : '';
+  return `<span class="job-status job-status-running"><span class="job-spinner"></span> در حال جستجو${p}</span>`;
 }
 
 function buildActionsHTML(job) {
@@ -68,9 +83,11 @@ function buildActionsHTML(job) {
 
 function buildRowHTML(job, rowNum) {
   const title = escapeHtml(job.query);
+  const owner = escapeHtml(job.created_by || '—');
   return `
     <div class="jt-col job-row-num">${rowNum}</div>
     <div class="jt-col job-row-title" title="${title}">«${title}»</div>
+    <div class="jt-col job-row-user" title="${owner}">${owner}</div>
     <div class="jt-col job-row-filter">${formatFilter(job)}</div>
     <div class="jt-col jt-status-cell">${buildStatusHTML(job)}</div>
     <div class="jt-col job-row-time">${formatTime(job.created_at)}</div>
@@ -91,9 +108,15 @@ function patchTable(newJobs) {
 
   // ── حالت خالی ──────────────────────────────────────────────────────────────
   if (!newJobs || newJobs.length === 0) {
-    if (!document.getElementById('jobsEmpty')) {
-      body.innerHTML = '<div class="jobs-empty" id="jobsEmpty">هنوز جستجویی ثبت نشده است.</div>';
+    const msg = _period
+      ? 'در این بازهٔ زمانی جستجویی ثبت نشده است.'
+      : 'هنوز جستجویی ثبت نشده است.';
+    const existingEmpty = document.getElementById('jobsEmpty');
+    if (!existingEmpty) {
+      body.innerHTML = `<div class="jobs-empty" id="jobsEmpty">${msg}</div>`;
       _knownStates.clear();
+    } else if (existingEmpty.textContent !== msg) {
+      existingEmpty.textContent = msg;
     }
     return;
   }
@@ -118,17 +141,18 @@ function patchTable(newJobs) {
     const existing = body.querySelector(`.job-row[data-job-id="${job.id}"]`);
 
     if (!existing) {
-      // ردیف جدید — با انیمیشن وارد می‌شود
+      // ردیف جدید — دقیقاً در جایگاهِ idx خودش وارد می‌شود (جدیدترین‌ها بالا)
       const el = document.createElement('div');
       el.className    = 'job-row is-new';
       el.dataset.jobId = job.id;
       el.innerHTML    = buildRowHTML(job, rowNum);
-      body.appendChild(el);
+      const anchor = body.children[idx] || null; // live collection: جایگاهِ فعلیِ همون ایندکس
+      body.insertBefore(el, anchor);
       // کلاس انیمیشن را بعد از یک فریم حذف کن (animation فقط یک بار)
       requestAnimationFrame(() => {
         setTimeout(() => el.classList.remove('is-new'), 350);
       });
-      _knownStates.set(job.id, { status: job.status, result_count: job.result_count });
+      _knownStates.set(job.id, { status: job.status, result_count: job.result_count, priority: job.priority });
       return;
     }
 
@@ -138,12 +162,13 @@ function patchTable(newJobs) {
 
     // ── وضعیت و عملیات (فقط اگه تغییر کرده) ─────────────────────────────
     const prev = _knownStates.get(job.id);
-    if (!prev || prev.status !== job.status || prev.result_count !== job.result_count) {
+    if (!prev || prev.status !== job.status || prev.result_count !== job.result_count
+        || prev.priority !== job.priority) {
       const statusEl  = existing.querySelector('.jt-status-cell');
       const actionsEl = existing.querySelector('.jt-actions-cell');
       if (statusEl)  statusEl.innerHTML  = buildStatusHTML(job);
       if (actionsEl) actionsEl.innerHTML = buildActionsHTML(job);
-      _knownStates.set(job.id, { status: job.status, result_count: job.result_count });
+      _knownStates.set(job.id, { status: job.status, result_count: job.result_count, priority: job.priority });
     }
     // عنوان، فیلتر، و زمان ثبت هرگز تغییر نمی‌کنند — لمس نمی‌شوند
   });
@@ -153,9 +178,14 @@ function patchTable(newJobs) {
 
 async function fetchJobs() {
   try {
-    const res = await fetch('/jobs', { headers: { 'X-Requested-With': 'fetch' } });
+    const url = _period ? `/jobs?period=${encodeURIComponent(_period)}` : '/jobs';
+    const res = await fetch(url, { headers: { 'X-Requested-With': 'fetch' } });
     if (!res.ok) return;
-    patchTable(await res.json());
+    const data = await res.json();
+    if (typeof data.server_time === 'number') {
+      _clockSkew = data.server_time - (Date.now() / 1000);
+    }
+    patchTable(data.jobs || []);
   } catch (e) { /* شکست موقت شبکه — poll بعدی تلاش می‌کند */ }
 }
 
@@ -166,6 +196,37 @@ function startPolling() {
 }
 
 // ── عملیات ──────────────────────────────────────────────────────────────────
+
+function renderPeriodButtons() {
+  document.querySelectorAll('.jobs-period-btn[data-period]').forEach(btn => {
+    if (btn.classList.contains('jobs-period-clear')) return;
+    btn.classList.toggle('is-active', btn.dataset.period === _period);
+  });
+  const clear = document.getElementById('jobsPeriodClear');
+  if (clear) clear.style.display = _period ? '' : 'none';
+}
+
+function setPeriod(period) {
+  _period = period;
+  try { localStorage.setItem(PERIOD_KEY, period); } catch (e) { /* بی‌اهمیت */ }
+  renderPeriodButtons();
+  fetchJobs();
+}
+
+function setupPeriodFilter() {
+  const box = document.getElementById('jobsPeriodBtns');
+  if (!box) return;
+  try { _period = localStorage.getItem(PERIOD_KEY) || ''; } catch (e) { _period = ''; }
+  if (!['day', 'week', 'month'].includes(_period)) _period = '';
+  renderPeriodButtons();
+
+  box.addEventListener('click', (e) => {
+    const btn = e.target.closest('.jobs-period-btn[data-period]');
+    if (!btn) return;
+    // کلیکِ دوباره روی همان بازه، فیلتر را برمی‌دارد
+    setPeriod(btn.dataset.period === _period ? '' : btn.dataset.period);
+  });
+}
 
 function viewJobResults(jobId) {
   window.location.href = '/jobs/' + jobId + '/results';
@@ -230,5 +291,6 @@ function showError(message) {
 // ── شروع ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   setupSearchForm();
+  setupPeriodFilter();
   startPolling();
 });

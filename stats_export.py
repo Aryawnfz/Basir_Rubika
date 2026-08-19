@@ -3,7 +3,9 @@
 
 یک فایل اکسل با چهار شیت تولید می‌کند که از روی نتایج یک جستجو محاسبه می‌شوند:
   ۱. خلاصه آمار        — شاخص‌های کلی + توزیع ری‌اکشن‌ها
-  ۲. پست‌ها            — یک ردیف برای هر نتیجه
+  ۲. پست‌ها            — یک ردیف برای هر نتیجه (شاملِ لینک پست و اکانتِ
+                         جستجوکننده — همان اطلاعاتی که قبلاً در یک اکسلِ
+                         جداگانه بود، حالا در همین شیت است)
   ۳. آمار کانال‌ها     — تجمیع به‌ازای هر کانال
   ۴. توزیع روزانه      — تجمیع به‌ازای هر روز
 
@@ -27,20 +29,31 @@ from rubika_search import (
 PLATFORM = "روبیکا"
 
 # دسته‌بندی ایموجی ری‌اکشن‌ها
+# مثبت: قلب‌ها، آتیش (🔥ی هیجان/تایید)، و هر چیزِ محبت‌آمیز/جشن‌گونه/تاییدآمیز
 _POSITIVE = {
-    "👍", "❤", "😍", "🔥", "👏", "🎉", "😂", "🙏", "💯", "😀", "😁", "😊",
-    "🥰", "😘", "👌", "💪", "✅", "⭐", "🌟", "🤩", "💖", "💚", "💙", "💛",
-    "🧡", "💜", "🤍", "🥳", "😄", "😃", "😇", "🤗", "😎", "🫡", "👀",
+    "👍", "❤", "🧡", "💛", "💚", "💙", "💜", "🤎", "🖤", "🤍", "💖", "💗",
+    "💓", "💞", "💕", "💘", "💝", "❣", "😍", "🥰", "😘", "😗", "😙", "😚",
+    "💋", "🫶", "😻", "🔥", "❤🔥", "👏", "🙌", "🎉", "🎊", "😂", "🤣",
+    "🙏", "💯", "😀", "😁", "😊", "😄", "😃", "😇", "🤗", "😎", "🫡",
+    "👌", "💪", "✅", "⭐", "🌟", "🤩", "🥳", "🏆", "🆒", "🤝", "🌹", "💐",
 }
+# منفی: ناراحتی، گریه، عصبانیت، انزجار، حرکات/نمادهای توهین‌آمیز
 _NEGATIVE = {
-    "👎", "😡", "😠", "😢", "😭", "💔", "🤬", "😞", "😔", "👿", "💩", "🤮",
-    "😤", "🙄", "😒", "😩", "😫", "😟", "🤢", "😨", "😰",
+    "👎", "😡", "😠", "🤬", "💢", "😢", "😭", "😿", "💔", "😞", "😔",
+    "😖", "😣", "👿", "💩", "🤮", "🤢", "😤", "🙄", "😒", "😩", "😫",
+    "😟", "😨", "😰", "🖕", "🤡",
 }
 
 
 def _strip_vs(emoji: str) -> str:
-    """حذف variation selector و کاراکترهای صفرعرض برای مقایسهٔ پایدار ایموجی."""
-    return emoji.replace("\ufe0f", "").replace("\u200d", "").strip()
+    """
+    حذف variation selector، zero-width joiner، و مادیفایرهای رنگ پوست
+    (Fitzpatrick) برای مقایسهٔ پایدار ایموجی — مثلاً 👍🏽/👍🏻/... همه باید
+    مثلِ 👍 ساده شناسایی شوند، وگرنه به‌اشتباه «خنثی» حساب می‌شوند.
+    """
+    e = emoji.replace("\ufe0f", "").replace("\u200d", "")
+    e = re.sub(r"[\U0001F3FB-\U0001F3FF]", "", e)  # Fitzpatrick skin-tone modifiers
+    return e.strip()
 
 
 def _reaction_kind(emoji: str) -> str:
@@ -118,6 +131,16 @@ def _fmt_dt_cell(jdate: str, jtime: str) -> str:
     return jpart
 
 
+_RE_CHANNEL_ID = re.compile(r"^https?://(?:www\.)?rubika\.ir/([^/]+)/")
+
+
+def _channel_id_from_link(link: str) -> str:
+    """آیدیِ عمومیِ کانال را از لینکِ پیام استخراج می‌کند
+    (فرمت: https://rubika.ir/{آیدی}/{message_id})."""
+    m = _RE_CHANNEL_ID.match((link or "").strip())
+    return m.group(1) if m else ""
+
+
 # ── محاسبهٔ آمار ─────────────────────────────────────────────────────────────
 def _compute(results: list[dict]) -> dict:
     total_views = 0
@@ -132,6 +155,7 @@ def _compute(results: list[dict]) -> dict:
     rows = []
     for r in results:
         channel = r.get("channel_name", "") or "—"
+        channel_id = _channel_id_from_link(r.get("message_link", ""))
         views = _parse_num(r.get("views", ""))
         text = (r.get("full_content") or r.get("message") or "").strip()
         jdate, jtime = _split_dt(r)
@@ -156,6 +180,11 @@ def _compute(results: list[dict]) -> dict:
             # اگر لیست ری‌اکشن خالی بود ولی total_reactions مقدار داشت
             r_total = _parse_num(r.get("total_reactions", 0))
 
+        reactions_str = " | ".join(
+            f"{(rx.get('emoji') or '').strip()} {rx.get('count', '')}"
+            for rx in (r.get("reactions") or []) if (rx.get("emoji") or "").strip()
+        )
+
         total_views += views
         total_reactions += r_total
         pos += r_pos
@@ -164,6 +193,7 @@ def _compute(results: list[dict]) -> dict:
 
         rows.append({
             "channel": channel,
+            "channel_id": channel_id,
             "jdate": jdate,
             "jtime": jtime,
             "text": text,
@@ -175,14 +205,18 @@ def _compute(results: list[dict]) -> dict:
             "comments": 0,
             "media": "—",
             "link": r.get("message_link", ""),
+            "reactions_str": reactions_str,
+            "account": r.get("account_name", ""),
         })
 
         ch = per_channel.setdefault(
-            channel, {"posts": 0, "views": 0, "reactions": 0, "forwards": 0}
+            channel, {"posts": 0, "views": 0, "reactions": 0, "forwards": 0, "channel_id": ""}
         )
         ch["posts"] += 1
         ch["views"] += views
         ch["reactions"] += r_total
+        if not ch["channel_id"] and channel_id:
+            ch["channel_id"] = channel_id
 
         if jdate:
             d = per_day.setdefault(jdate, {"posts": 0, "views": 0, "reactions": 0})
@@ -301,24 +335,26 @@ def generate_stats_excel(results: list[dict], query: str = "") -> BytesIO:
     # ── شیت ۲: پست‌ها ─────────────────────────────────────────────────────────
     wp = wb.create_sheet("پست‌ها")
     wp.sheet_view.rightToLeft = True
-    headers = ["ردیف", "پلتفرم", "کانال", "تاریخ پست", "متن پست", "بازدید",
-               "ری‌اکشن", "ری‌اکشن مثبت", "ری‌اکشن منفی", "فوروارد", "کامنت", "نوع رسانه"]
-    widths = [6, 10, 26, 30, 60, 12, 10, 12, 12, 10, 10, 12]
+    headers = ["ردیف", "پلتفرم", "کانال", "آیدی", "تاریخ پست", "متن پست", "بازدید",
+               "ری‌اکشن", "ری‌اکشن مثبت", "ری‌اکشن منفی", "فوروارد", "کامنت",
+               "نوع رسانه", "ری‌اکشن‌ها", "لینک پست", "اکانت جستجو"]
+    widths = [6, 10, 26, 18, 30, 60, 12, 10, 12, 12, 10, 10, 12, 30, 40, 20]
     _write_header(wp, headers, widths)
     for i, r in enumerate(s["rows"], start=1):
         rownum = i + 1
         fill = _ROW_ODD if rownum % 2 == 0 else _ROW_EVEN
         values = [
-            i, PLATFORM, r["channel"], _fmt_dt_cell(r["jdate"], r["jtime"]),
+            i, PLATFORM, r["channel"], r["channel_id"], _fmt_dt_cell(r["jdate"], r["jtime"]),
             r["text"], r["views"], r["reactions"], r["pos"], r["neg"],
             r["forwards"], r["comments"], r["media"],
+            r["reactions_str"], r["link"], r["account"],
         ]
         for col, val in enumerate(values, start=1):
             c = wp.cell(row=rownum, column=col, value=val)
             c.fill = fill
             c.border = _BORDER
             c.alignment = Alignment(
-                horizontal="right" if col == 5 else "center",
+                horizontal="right" if col in (6, 14, 15) else "center",
                 vertical="center", wrap_text=True,
             )
         wp.row_dimensions[rownum].height = 38
@@ -329,14 +365,14 @@ def generate_stats_excel(results: list[dict], query: str = "") -> BytesIO:
     wc.sheet_view.rightToLeft = True
     _write_header(
         wc,
-        ["ردیف", "نام کانال", "تعداد پست", "مجموع بازدید", "مجموع ری‌اکشن", "مجموع فوروارد"],
-        [6, 32, 12, 16, 16, 16],
+        ["ردیف", "نام کانال", "آیدی", "تعداد پست", "مجموع بازدید", "مجموع ری‌اکشن", "مجموع فوروارد"],
+        [6, 32, 18, 12, 16, 16, 16],
     )
     ch_sorted = sorted(s["per_channel"].items(), key=lambda x: x[1]["views"], reverse=True)
     for i, (name, d) in enumerate(ch_sorted, start=1):
         rownum = i + 1
         fill = _ROW_ODD if rownum % 2 == 0 else _ROW_EVEN
-        values = [i, name, d["posts"], d["views"], d["reactions"], d["forwards"]]
+        values = [i, name, d["channel_id"], d["posts"], d["views"], d["reactions"], d["forwards"]]
         for col, val in enumerate(values, start=1):
             c = wc.cell(row=rownum, column=col, value=val)
             c.fill = fill
