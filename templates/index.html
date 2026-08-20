@@ -51,7 +51,7 @@
   {% if accounts|length == 0 %}
   <div class="no-accounts-hint">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    هیچ اکانت روبیکا‌ای تعریف نشده. {% if current_role == ROLE_ADMIN %}<a href="{{ url_for('accounts_page') }}">از اینجا اضافه کنید</a>{% else %}برای افزودن اکانت با مدیر تماس بگیرید.{% endif %}
+    هیچ اکانت روبیکا‌یی تعریف نشده. {% if current_role == ROLE_ADMIN %}<a href="{{ url_for('accounts_page') }}">از اینجا اضافه کنید</a>{% else %}برای افزودن اکانت با مدیر تماس بگیرید.{% endif %}
   </div>
   {% elif accounts|selectattr('profile_ready')|list|length == 0 %}
   <div class="no-accounts-hint warning">
@@ -72,12 +72,21 @@
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
         لیست جستجوها
       </h3>
+
+      <div class="jobs-period-btns" id="jobsPeriodBtns">
+        <button type="button" class="jobs-period-btn" data-period="day">روز</button>
+        <button type="button" class="jobs-period-btn" data-period="week">هفته</button>
+        <button type="button" class="jobs-period-btn" data-period="month">ماه</button>
+        <button type="button" class="jobs-period-btn jobs-period-clear" data-period=""
+                id="jobsPeriodClear" title="نمایش همه" style="display:none">✕</button>
+      </div>
     </div>
 
     <div class="jobs-table-wrap">
       <div class="jobs-table-head">
         <div class="jt-col jt-col-num">ردیف</div>
         <div class="jt-col jt-col-title">عنوان</div>
+        <div class="jt-col">کاربر</div>
         <div class="jt-col">فیلتر تاریخ</div>
         <div class="jt-col jt-col-status">وضعیت</div>
         <div class="jt-col">زمان ثبت</div>

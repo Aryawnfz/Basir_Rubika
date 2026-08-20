@@ -54,9 +54,17 @@
           {% if u.username == main_admin %}
           <span class="btn-already-in">🔒 غیرقابل حذف</span>
           {% else %}
+          <button type="button" class="btn-edit"
+                  onclick="openEditModal('{{ u.username }}')">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+            ویرایش
+          </button>
           <form action="{{ url_for('user_delete', username=u.username) }}" method="POST"
                 style="display:inline"
-                onsubmit="return confirm('آیا از حذف کاربر «{{ u.username }}» مطمئن هستید؟')">
+                onsubmit="return confirmDeleteForm(event, 'حذف کاربر', 'آیا از حذف کاربر «{{ u.username }}» مطمئن هستید؟')">
             <button type="submit" class="btn-delete">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/>
@@ -88,4 +96,59 @@
   </div>
 
 </div>
+
+<!-- ══ مودال ویرایش کاربر ══════════════════════════════════════════════ -->
+<div class="modal-overlay" id="editUserModal" onclick="if(event.target===this) closeEditModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <form id="editUserForm" method="POST">
+      <div class="modal-header">
+        <h3>✏️ ویرایشِ کاربر</h3>
+        <button type="button" class="modal-close" onclick="closeEditModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group" style="margin-bottom:16px">
+          <label>نام کاربری</label>
+          <input type="text" name="username" id="editUsernameInput" required />
+        </div>
+        <div class="form-group">
+          <label>رمز عبور جدید</label>
+          <input type="password" name="password" id="editPasswordInput"
+                 placeholder="برای عوض‌نکردنِ رمزِ فعلی، خالی بگذارید" autocomplete="new-password" />
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn-cancel" onclick="closeEditModal()">انصراف</button>
+        <button type="submit" class="btn-add">ثبت</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const editUserModal   = document.getElementById('editUserModal');
+  const editUserForm    = document.getElementById('editUserForm');
+  const editUsernameInp = document.getElementById('editUsernameInput');
+  const editPasswordInp = document.getElementById('editPasswordInput');
+
+  function openEditModal(username) {
+    editUserForm.action = "/users/edit/" + encodeURIComponent(username);
+    editUsernameInp.value = username;
+    editPasswordInp.value = '';
+    editUserModal.style.display = 'flex';
+    setTimeout(() => editUserModal.classList.add('visible'), 10);
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeEditModal() {
+    editUserModal.classList.remove('visible');
+    setTimeout(() => {
+      editUserModal.style.display = 'none';
+      document.body.style.overflow = '';
+    }, 250);
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && editUserModal.classList.contains('visible')) closeEditModal();
+  });
+</script>
 {% endblock %}

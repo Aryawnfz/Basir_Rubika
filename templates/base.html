@@ -4,46 +4,77 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}بصیر{% endblock %}</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16.png') }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon-192.png') }}">
+  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon-180.png') }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
 </head>
-<body>
+<body class="{% if session.get('user') %}has-sidebar{% endif %}">
 
 {% if session.get('user') %}
-<nav class="navbar">
-  <div class="nav-left">
-    {% if current_role == ROLE_ADMIN %}
-    <a href="{{ url_for('accounts_page') }}" class="nav-btn {% if request.endpoint == 'accounts_page' %}active{% endif %}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-      <span class="nav-btn-text">مدیریت اکانت‌ها</span>
-    </a>
-    <a href="{{ url_for('users_page') }}" class="nav-btn {% if request.endpoint == 'users_page' %}active{% endif %}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      <span class="nav-btn-text">مدیریت کاربران</span>
-    </a>
-    {% endif %}
-    <a href="{{ url_for('reports') }}" class="nav-btn {% if request.endpoint == 'reports' %}active{% endif %}">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      <span class="nav-btn-text">گزارش</span>
-    </a>
-  </div>
+<button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="باز و بسته کردن منو">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+</button>
 
-  <div class="nav-center">
-    <a href="{{ url_for('index') }}" class="nav-brand">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-top">
+    <a href="{{ url_for('index') }}" class="sidebar-brand">
       <span class="brand-icon">◈</span>
       <span class="brand-text">بصیر</span>
     </a>
+    <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="جمع/باز کردن منو" title="جمع/باز کردن منو">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 6 9 12 15 18"/></svg>
+    </button>
   </div>
 
-  <div class="nav-right">
-    <span class="nav-user">{{ session['user'] }}</span>
-    <a href="{{ url_for('logout') }}" class="nav-btn logout-btn">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-      <span class="nav-btn-text">خروج</span>
+  <nav class="sidebar-nav">
+    <a href="{{ url_for('index') }}" class="sidebar-link {% if request.endpoint == 'index' %}active{% endif %}">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span class="sidebar-link-text">جستجو</span>
+    </a>
+    {% if current_role == ROLE_ADMIN %}
+    <a href="{{ url_for('accounts_page') }}" class="sidebar-link {% if request.endpoint == 'accounts_page' %}active{% endif %}">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      <span class="sidebar-link-text">مدیریت اکانت‌ها</span>
+    </a>
+    <a href="{{ url_for('users_page') }}" class="sidebar-link {% if request.endpoint == 'users_page' %}active{% endif %}">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span class="sidebar-link-text">مدیریت کاربران</span>
+    </a>
+    {% endif %}
+    <a href="{{ url_for('reports') }}" class="sidebar-link {% if request.endpoint == 'reports' %}active{% endif %}">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span class="sidebar-link-text">گزارش</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <span class="sidebar-user">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="sidebar-link-text">{{ session['user'] }}</span>
+    </span>
+    <a href="{{ url_for('logout') }}" class="sidebar-link logout-btn">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <span class="sidebar-link-text">خروج</span>
     </a>
   </div>
-</nav>
+</aside>
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+<script>
+  // Restore collapsed sidebar state early to avoid layout flash
+  (() => {
+    try {
+      if (localStorage.getItem('basir_sidebar_collapsed') === '1') {
+        document.getElementById('sidebar').classList.add('collapsed');
+      }
+    } catch (e) {}
+  })();
+</script>
 {% endif %}
 
 {% with messages = get_flashed_messages(with_categories=true) %}
@@ -69,6 +100,19 @@
   <div class="orb orb-3"></div>
 </div>
 
+<!-- ══ مودال تأیید سراسری (سبکِ SweetAlert) ══════════════════════════ -->
+<div class="em-overlay" id="confirmModal" style="display:none">
+  <div class="em-box confirm-box">
+    <div class="confirm-icon" id="confirmIcon">⚠️</div>
+    <h3 class="confirm-title" id="confirmTitle">آیا مطمئن هستید؟</h3>
+    <p class="confirm-text" id="confirmText"></p>
+    <div class="confirm-actions">
+      <button type="button" class="confirm-btn confirm-cancel" id="confirmCancelBtn">انصراف</button>
+      <button type="button" class="confirm-btn confirm-danger" id="confirmOkBtn">بله، حذف کن</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // Auto-dismiss flash messages
   setTimeout(() => {
@@ -78,7 +122,44 @@
       setTimeout(() => el.remove(), 400);
     });
   }, 4000);
+
+  // Sidebar toggle (mobile)
+  (() => {
+    const toggle = document.getElementById('sidebarToggle');
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebarOverlay');
+    if (!toggle || !sidebar) return;
+
+    const closeSidebar = () => {
+      sidebar.classList.remove('open');
+      overlay && overlay.classList.remove('show');
+    };
+
+    toggle.addEventListener('click', () => {
+      sidebar.classList.toggle('open');
+      overlay && overlay.classList.toggle('show');
+    });
+    overlay && overlay.addEventListener('click', closeSidebar);
+    sidebar.querySelectorAll('a').forEach(a => a.addEventListener('click', closeSidebar));
+  })();
+
+  // Sidebar collapse (desktop)
+  (() => {
+    const collapseBtn = document.getElementById('sidebarCollapseBtn');
+    const sidebar = document.getElementById('sidebar');
+    if (!collapseBtn || !sidebar) return;
+    const KEY = 'basir_sidebar_collapsed';
+
+    collapseBtn.addEventListener('click', () => {
+      const collapsed = sidebar.classList.toggle('collapsed');
+      try { localStorage.setItem(KEY, collapsed ? '1' : '0'); } catch (e) {}
+    });
+  })();
 </script>
+
+
+<script src="{{ url_for('static', filename='confirm-modal.js') }}"></script>
+<script src="{{ url_for('static', filename='ui-fx.js') }}"></script>
 
 {% block scripts %}{% endblock %}
 </body>

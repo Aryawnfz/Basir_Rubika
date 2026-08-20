@@ -120,3 +120,33 @@ def set_password(username: str, password: str) -> tuple[bool, str]:
             _write(users)
             return True, "رمز عبور تغییر کرد."
     return False, "کاربر یافت نشد."
+
+
+def update_user(username: str, new_username: str | None = None,
+                 new_password: str | None = None) -> tuple[bool, str]:
+    """
+    ویرایشِ نامِ کاربری و/یا رمزِ عبورِ یک کاربر (فقط توسط مدیر). حساب
+    مدیرِ اصلی (config.ADMIN_USER) اصلاً قابلِ ویرایش نیست — نه نامِ
+    کاربری و نه رمزِ عبور — و همیشه ثابت می‌ماند؛ فقط کاربرانِ عادی
+    قابلِ ویرایش‌اند. اگر رمزِ جدید خالی باشد، رمزِ فعلی دست‌نخورده
+    می‌ماند.
+    """
+    if is_admin_username(username):
+        return False, "اطلاعاتِ حساب مدیرِ اصلی قابلِ ویرایش نیست."
+
+    users = load_users()
+    target = next((u for u in users if u.get("username") == username), None)
+    if target is None:
+        return False, "کاربر یافت نشد."
+
+    new_username = (new_username or "").strip()
+    if new_username and new_username != username:
+        if any(u.get("username") == new_username for u in users):
+            return False, "کاربری با این نامِ کاربری از قبل وجود دارد."
+        target["username"] = new_username
+
+    if new_password:
+        target["password_hash"] = generate_password_hash(new_password)
+
+    _write(users)
+    return True, "اطلاعاتِ کاربر به‌روزرسانی شد."
