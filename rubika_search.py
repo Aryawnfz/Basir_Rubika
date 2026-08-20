@@ -25,7 +25,21 @@ from datetime import date, timedelta
 from playwright.async_api import async_playwright, TimeoutError as PwTimeout
 from khayyam import JalaliDate
 
-from config import RUBIKA_URL, SEARCH_TIMEOUT_MS, MAX_CONCURRENT
+from config import (
+    RUBIKA_URL,
+    SEARCH_TIMEOUT_MS,
+    MAX_CONCURRENT,
+    RESULTS_TIMEOUT_MS,
+    RESULTS_SETTLE_MS,
+    RESULTS_POLL_MS,
+    QUERY_RETRIES,
+    QUERY_RETRY_AFTER_MS,
+    MESSAGE_LOAD_TIMEOUT_MS,
+    MESSAGE_POLL_MS,
+    EXTRACT_ATTEMPTS,
+    LINK_TIMEOUT_MS,
+    MENU_TIMEOUT_MS,
+)
 
 # ── قفل per-account ──────────────────────────────────────────────────────────
 # اگر دو job هم‌زمان بخواهند از همان اکانت (همان پروفایل Chrome) استفاده کنند،
@@ -166,6 +180,19 @@ _EMOJI_SHORTCODES: dict[str, str] = {
     "beer": "🍺", "beers": "🍻", "wine_glass": "🍷", "cake": "🎂",
     "birthday": "🎂", "rose": "🌹", "sunflower": "🌻", "four_leaf_clover": "🍀",
     "dog": "🐶", "cat": "🐱", "bird": "🐦", "dove": "🕊️", "unicorn": "🦄",
+    "diamonds": "🔹", "bus": "🚌", "train": "🚆", "train2": "🚆",
+    "bullettrain_side": "🚄", "metro": "🚇", "ship": "🚢", "taxi": "🚕",
+    "hotel": "🏨", "ticket": "🎫", "calendar": "📅", "date": "📅",
+    "pushpin": "📌", "round_pushpin": "📍", "link": "🔗", "memo": "📝",
+    "newspaper": "📰", "camera": "📷", "video_camera": "📹", "movie_camera": "🎥",
+    "telephone": "☎️", "phone": "📱", "iphone": "📱", "email": "✉️",
+    "chart_with_upwards_trend": "📈", "chart_with_downwards_trend": "📉",
+    "bar_chart": "📊", "money_with_wings": "💸", "dollar": "💵",
+    "moneybag": "💰", "credit_card": "💳", "package": "📦", "bulb": "💡",
+    "lock": "🔒", "key": "🔑", "mag": "🔍", "loudspeaker": "📢", "mega": "📣",
+    "bookmark": "🔖", "books": "📚", "book": "📖", "clock": "🕐",
+    "alarm_clock": "⏰", "hourglass": "⌛", "watch": "⌚", "globe": "🌐",
+    "earth_asia": "🌏", "flag_ir": "🇮🇷", "ir": "🇮🇷",
 }
 
 
@@ -289,18 +316,36 @@ _JS_COLLECT_RESULTS = r"""
 }
 """
 
-_JS_SCROLL_RESULTS = r"""
+# شمارشِ سریعِ نتایج (برای پُل‌زدن تا کاملِ شدنِ لیست، بدون هزینهٔ جمع‌آوریِ کامل)
+_JS_COUNT_RESULTS = r"""
 () => {
   const grp = document.querySelector('.search-group-messages');
-  const sc = (grp && (grp.closest('.scrollable') ||
-                      grp.closest('.search-super-container-chats') ||
-                      grp.closest('.sidebar-content'))) ||
-             document.querySelector('.search-super .scrollable') ||
-             document.querySelector('.sidebar-search .scrollable');
-  if (!sc) return -1;
+  return grp ? grp.querySelectorAll('ul.chatlist > li').length : 0;
+}
+"""
+
+# اسکرولِ ظرفِ نتایج برای تحریکِ لودِ تدریجی (اگر روبیکا صفحه‌بندی کند).
+# ظرفِ درست، نزدیک‌ترین والدِ اسکرول‌شدنی است؛ مقدارِ برگشتی وضعیت اسکرول است.
+_JS_SCROLL_RESULTS = r"""
+(toEnd) => {
+  const grp = document.querySelector('.search-group-messages');
+  if (!grp) return {ok: false};
+  let sc = null, el = grp;
+  while (el && el !== document.body) {
+    const st = getComputedStyle(el);
+    if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 10) { sc = el; break; }
+    el = el.parentElement;
+  }
+  if (!sc) {
+    sc = grp.closest('.scrollable') ||
+         document.querySelector('.search-super .scrollable') ||
+         document.querySelector('.sidebar-search .scrollable');
+  }
+  if (!sc) return {ok: false};
   const before = sc.scrollTop;
-  sc.scrollTop = sc.scrollHeight;
-  return Math.round(sc.scrollTop) - Math.round(before);
+  sc.scrollTop = toEnd ? sc.scrollHeight : 0;
+  return {ok: true, moved: Math.round(sc.scrollTop) - Math.round(before),
+          atEnd: sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 5};
 }
 """
 
@@ -317,12 +362,15 @@ _JS_EXTRACT_BUBBLE = r"""
   document.querySelectorAll('[data-basir-target]').forEach(e => e.removeAttribute('data-basir-target'));
 
   const bubbles = [...document.querySelectorAll('.bubbles .bubble, .bubble')];
+  const textOf = b => {
+    // علاوه بر پیامِ متنی، کپشنِ عکس/ویدیو هم باید تطبیق داده شود.
+    const el = b.querySelector('[rb-message-text], .message, .text-content, .translatable-message');
+    return el ? el.textContent : '';
+  };
   let bubble = null;
   if (key) {
     for (const b of bubbles) {
-      const m = b.querySelector('.message');
-      if (!m) continue;
-      const t = norm(m.textContent);
+      const t = norm(textOf(b));
       if (t && (t.includes(key) || key.includes(t.slice(0, 16)))) { bubble = b; break; }
     }
   }
@@ -435,11 +483,40 @@ async def _first_selector(page, selectors, timeout):
     return None
 
 
-async def _extract_message_details(page, mid: str, snippet: str) -> dict:
+async def _read_clipboard(page) -> str:
+    try:
+        return (await page.evaluate(
+            "async () => { try { return await navigator.clipboard.readText(); } "
+            "catch (e) { return ''; } }")) or ""
+    except Exception:
+        return ""
+
+
+async def _close_context_menu(page) -> None:
+    """
+    منوی کلیک‌راست را می‌بندد.
+
+    منوی بازمانده روی صفحه می‌نشیند و کلیکِ نتیجهٔ بعدی را مسدود می‌کند، پس
+    بی‌قیدوشرط Escape می‌زنیم. اگر این کار پنلِ جستجو را هم ببندد، حلقهٔ
+    اصلی لیست را با `expect` و بدونِ مرحلهٔ تثبیت، سریع بازمی‌گرداند.
+    """
+    try:
+        await page.keyboard.press("Escape")
+    except Exception:
+        pass
+
+
+async def _extract_message_details(page, mid: str, snippet: str,
+                                   timeout_ms: int = MESSAGE_LOAD_TIMEOUT_MS,
+                                   want_link: bool = True) -> dict:
     """
     بعد از باز شدن چت و پرش به پیام، محتوای کامل، ری‌اکشن‌ها، بازدید و لینک را
-    مستقیماً از حبابِ پیام استخراج می‌کند. اگر محتوا با اسنیپتِ نتیجه هم‌خوان
-    نبود، دیکشنری خالی برمی‌گرداند تا پیامِ اشتباه نمایش داده نشود.
+    مستقیماً از حبابِ پیام استخراج می‌کند.
+
+    تا `timeout_ms` صبر می‌کند که حبابِ منطبق با اسنیپت لود شود، ولی به‌محضِ
+    آماده شدن ادامه می‌دهد (نمونه‌برداریِ سریع) — هم پرحوصله و هم سریع.
+    فیلدِ `matched` نشان می‌دهد محتوای استخراج‌شده با اسنیپتِ نتیجه هم‌خوان بود
+    یا نه؛ تصمیمِ تلاشِ مجدد با فراخواننده است تا هیچ نتیجه‌ای از قلم نیفتد.
     """
     details = {
         'full_content': '',
@@ -449,27 +526,39 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
         'datetime_full': '',
         'msg_date': '',
         'message_link': '',
+        'matched': False,
     }
 
+    # پُل‌زدنِ سریع تا لودِ حبابِ منطبق؛ اولویت با حبابی که با اسنیپت می‌خواند.
+    deadline = asyncio.get_event_loop().time() + timeout_ms / 1000
     data = None
-    for _ in range(24):
-        await asyncio.sleep(0.5)
+    best = None
+    poll = MESSAGE_POLL_MS / 1000
+    while True:
         try:
             data = await page.evaluate(_JS_EXTRACT_BUBBLE, snippet)
         except Exception:
             data = None
-        if data and (data.get('content') or data.get('reactions')):
+
+        if data:
+            content = (data.get('content') or '').strip()
+            if content and (not snippet or _snippet_matches(snippet, content)):
+                break                      # حبابِ درست لود شد → ادامه
+            if content or data.get('reactions'):
+                best = data              # کاندیدِ ضعیف؛ اگر بهتری نیامد همین
+
+        if asyncio.get_event_loop().time() >= deadline:
+            data = data if (data and (data.get('content') or '').strip()) else best
             break
+        await asyncio.sleep(poll)
 
     if not data:
         print(f"[Basir] حباب پیام پیدا نشد: {snippet[:40]}")
         return details
 
     full_content = (data.get('content') or '').strip()
-    # تأیید تطابق محتوا با نتیجهٔ کلیک‌شده
-    if snippet and full_content and not _snippet_matches(snippet, full_content):
-        print(f"[Basir] محتوای نامنطبق با نتیجه — دور ریخته شد: {snippet[:40]}")
-        return details
+    details['matched'] = bool(
+        full_content and (not snippet or _snippet_matches(snippet, full_content)))
 
     details['full_content'] = emojify(full_content or snippet)
     reactions = data.get('reactions', []) or []
@@ -496,44 +585,68 @@ async def _extract_message_details(page, mid: str, snippet: str) -> dict:
     # element.click() در JS؛ چون نوشتنِ کلیپ‌بوردِ روبیکا به یک user-gesture
     # معتبر نیاز دارد و کلیکِ برنامه‌ایِ JS آن را بی‌صدا مسدود می‌کند.
     try:
+        if not want_link:
+            return details
         bubble = await page.query_selector('.bubble[data-basir-target="1"] .bubble-content')
         if bubble is None:
             bubble = await page.query_selector('.bubble[data-basir-target="1"]')
         if bubble is not None and await bubble.is_visible():
-            await bubble.click(button="right", timeout=4000)
-            await asyncio.sleep(0.6)
-            item = await page.query_selector('.btn-menu-item.rbico-link')
-            if item is None:
-                for it in await page.query_selector_all('.btn-menu-item, .menu-item, [role=menuitem]'):
-                    try:
-                        t = (await it.text_content() or '').strip()
-                    except Exception:
-                        t = ''
-                    if 'لینک پیام' in t or 'کپی کردن لینک' in t or 'رونوشت لینک' in t:
-                        item = it
-                        break
+            # منو با تأخیرِ متغیر باز می‌شود؛ با صبرِ فعال (نه sleep ثابت) و یک
+            # تلاشِ مجدد، کلیک‌راستِ نگرفته هم جبران می‌شود.
+            item = None
+            for rc_try in range(2):
+                try:
+                    await bubble.scroll_into_view_if_needed(timeout=3000)
+                except Exception:
+                    pass
+                try:
+                    await bubble.click(button="right", timeout=4000)
+                except Exception:
+                    break
+                try:
+                    item = await page.wait_for_selector(
+                        '.btn-menu-item.rbico-link', timeout=MENU_TIMEOUT_MS, state="visible")
+                except PwTimeout:
+                    item = None
+                if item is None:
+                    for it in await page.query_selector_all(
+                            '.btn-menu-item, .menu-item, [role=menuitem]'):
+                        try:
+                            t = (await it.text_content() or '').strip()
+                            vis = await it.is_visible()
+                        except Exception:
+                            t, vis = '', False
+                        if vis and ('لینک پیام' in t or 'کپی کردن لینک' in t
+                                    or 'رونوشت لینک' in t):
+                            item = it
+                            break
+                if item is not None:
+                    break
+                # منو باز نشد یا خالی بود → ببند و یک بار دیگر امتحان کن
+                if rc_try == 0:
+                    await _close_context_menu(page)
+                    await asyncio.sleep(0.3)
             if item is not None:
+                # مقدارِ قبلیِ کلیپ‌بورد (لینکِ پیامِ قبلی) نگه داشته می‌شود؛ اگر
+                # کپی نگیرد، همان مقدارِ کهنه خوانده و به‌اشتباه به این پیام
+                # نسبت داده می‌شود. پس فقط مقدارِ تازه پذیرفته می‌شود.
+                prev = await _read_clipboard(page)
                 await item.click(timeout=4000)
-                await asyncio.sleep(0.6)
                 link = ""
-                for _ in range(6):
-                    try:
-                        link = await page.evaluate(
-                            "async () => { try { return await navigator.clipboard.readText(); } catch (e) { return ''; } }")
-                    except Exception:
-                        link = ""
-                    if link and 'rubika' in link:
+                link_deadline = asyncio.get_event_loop().time() + LINK_TIMEOUT_MS / 1000
+                while True:
+                    await asyncio.sleep(0.15)
+                    link = await _read_clipboard(page)
+                    if link and 'rubika' in link and link != prev:
                         break
-                    await asyncio.sleep(0.4)
-                if link and 'rubika' in link:
+                    if asyncio.get_event_loop().time() >= link_deadline:
+                        break
+                if link and 'rubika' in link and link != prev:
                     details['message_link'] = link.strip()
             else:
-                await page.keyboard.press("Escape")
+                await _close_context_menu(page)
     except Exception:
-        try:
-            await page.keyboard.press("Escape")
-        except Exception:
-            pass
+        await _close_context_menu(page)
 
     return details
 
@@ -723,6 +836,181 @@ def profile_has_data(user_data_dir: str) -> bool:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ثبتِ کوئری و برداشتِ کاملِ نتایج
+# ══════════════════════════════════════════════════════════════════════════════
+def _row_key(row: dict) -> tuple[str, str, str]:
+    """کلیدِ یکتای یک ردیفِ نتیجه (عنوان، اسنیپت، زمان)."""
+    return ((row.get('title') or '').strip(),
+            (row.get('subtitle') or '').strip(),
+            (row.get('time') or '').strip())
+
+
+async def _submit_query(page, search_query: str, typed: bool = False) -> bool:
+    """
+    کوئری را در باکسِ جستجوی کناری می‌نویسد و جستجو را اجرا می‌کند.
+
+    در تلاشِ مجدد (typed=True) حرف‌به‌حرف تایپ می‌شود؛ رویدادهای واقعیِ
+    کی‌بورد کمپوننتِ جستجوی Angular را مطمئن‌تر دوباره تحریک می‌کنند.
+    """
+    box = await _first_selector(page, SEARCH_SELECTORS, timeout=12_000)
+    if not box:
+        return False
+    try:
+        await box.click()
+        await box.fill("")
+        if typed:
+            await asyncio.sleep(0.5)
+            await box.type(search_query, delay=60)
+        else:
+            await box.fill(search_query)
+        await page.keyboard.press("Enter")
+        return True
+    except Exception as e:
+        print(f"[Basir] ثبت کوئری ناموفق: {e}")
+        return False
+
+
+async def _harvest_results(page, search_query: str, expect: int = 0) -> list[dict]:
+    """
+    همهٔ ردیف‌های گروهِ «پیام‌ها» را برمی‌دارد.
+
+    سرورِ روبیکا گاهی چند ثانیه و گاهی بیش از ۲۰ ثانیه طول می‌کشد؛ پس:
+      • تا RESULTS_TIMEOUT_MS برای اولین نتیجه صبر می‌کنیم (نه چند ثانیه)،
+      • اگر تا QUERY_RETRY_AFTER_MS چیزی نیامد، کوئری را دوباره ثبت می‌کنیم،
+      • بعد از آمدنِ نتایج، تا وقتی تعدادشان RESULTS_SETTLE_MS بی‌تغییر نماند
+        برداشت نمی‌کنیم تا لیست ناقص برداشته نشود،
+      • با اسکرول تا انتها و برگشت، لودِ تدریجیِ احتمالی هم تحریک می‌شود.
+
+    `expect` تعدادِ ردیفِ انتزاری است (برای بازیابیِ لیستِ قبلاً برداشته‌شده)؛
+    با رسیدن به این تعداد، مرحلهٔ تثبیت رد می‌شود تا وقت تلف نشود.
+    """
+    loop = asyncio.get_event_loop()
+    poll = RESULTS_POLL_MS / 1000
+    deadline = loop.time() + RESULTS_TIMEOUT_MS / 1000
+    retry_at = loop.time() + QUERY_RETRY_AFTER_MS / 1000
+    retries_left = QUERY_RETRIES
+
+    count = 0
+    while True:
+        try:
+            count = await page.evaluate(_JS_COUNT_RESULTS)
+        except Exception:
+            count = 0
+        if expect and count >= expect:
+            return await _collect_rows(page)
+        if count:
+            break
+        now = loop.time()
+        if now >= deadline:
+            print("[Basir] هیچ نتیجه‌ای در مهلتِ مقرر نیامد")
+            return []
+        if now >= retry_at and retries_left > 0:
+            retries_left -= 1
+            print(f"[Basir] نتیجه‌ای نیامد — ثبتِ مجددِ کوئری ({QUERY_RETRIES - retries_left})")
+            await _submit_query(page, search_query, typed=True)
+            retry_at = loop.time() + QUERY_RETRY_AFTER_MS / 1000
+        await asyncio.sleep(poll)
+
+    print(f"[Basir] اولین نتایج آمد ({count}) — صبر تا کامل شدنِ لیست")
+
+    # تثبیت: تا وقتی تعداد ثابت نماند، هنوز در حال لود است.
+    settle = RESULTS_SETTLE_MS / 1000
+    stable_since = loop.time()
+    scrolled_end = False
+    while True:
+        await asyncio.sleep(poll)
+        try:
+            now_count = await page.evaluate(_JS_COUNT_RESULTS)
+        except Exception:
+            now_count = count
+        if now_count != count:
+            count = now_count
+            stable_since = loop.time()
+            scrolled_end = False
+            continue
+        # تعداد ثابت است؛ یک بار تا انتها اسکرول کن تا لودِ تدریجی تحریک شود.
+        if not scrolled_end and loop.time() - stable_since > settle / 2:
+            try:
+                await page.evaluate(_JS_SCROLL_RESULTS, True)
+            except Exception:
+                pass
+            scrolled_end = True
+            continue
+        if loop.time() - stable_since >= settle:
+            break
+        if loop.time() >= deadline:
+            break
+
+    try:
+        await page.evaluate(_JS_SCROLL_RESULTS, False)   # برگشت به بالای لیست
+    except Exception:
+        pass
+
+    rows = await _collect_rows(page)
+    print(f"[Basir] {len(rows)} نتیجه برداشت شد")
+    return rows
+
+
+async def _collect_rows(page) -> list[dict]:
+    try:
+        return await page.evaluate(_JS_COLLECT_RESULTS)
+    except Exception as e:
+        print(f"[Basir] خطای جمع‌آوری نتایج: {e}")
+        return []
+
+
+_JS_CLICK_ROW = r"""
+(idx) => {
+  const el = document.querySelector(`[data-basir-idx="${idx}"]`);
+  if (!el) return false;
+  (el.querySelector('.chatlist-chat, a, .row') || el).click();
+  return true;
+}
+"""
+
+
+async def _click_row(page, row: dict, expected_key: tuple[str, str, str]) -> bool:
+    """
+    ردیفِ نتیجه را کلیک می‌کند. چون Angular ممکن است لیست را بازسازی کند،
+    ایندکس‌ها را تازه می‌گیریم و ردیف را با کلیدش پیدا می‌کنیم (نه ایندکسِ کهنه).
+
+    ردیف‌های پایین‌ترِ لیست بیرونِ کادرِ دید هستند و Playwright آن‌ها را
+    «نامرئی» می‌بیند؛ پس اول داخلِ دید اسکرول می‌شوند و اگر کلیکِ واقعی هم
+    نگرفت، کلیکِ برنامه‌ای انجام می‌شود (اینجا user-gesture لازم نیست).
+    """
+    idx = row.get('idx')
+    try:
+        fresh = await page.evaluate(_JS_COLLECT_RESULTS)
+    except Exception:
+        fresh = []
+    for fr in fresh:
+        if _row_key(fr) == expected_key:
+            idx = fr.get('idx')
+            break
+    if idx is None:
+        return False
+
+    el = await page.query_selector(f'[data-basir-idx="{idx}"]')
+    if el is not None:
+        try:
+            await el.scroll_into_view_if_needed(timeout=4_000)
+        except Exception:
+            pass
+        try:
+            await el.click(timeout=5_000)
+            return True
+        except Exception:
+            pass
+
+    try:
+        if await page.evaluate(_JS_CLICK_ROW, idx):
+            return True
+    except Exception as e:
+        print(f"[Basir] کلیک روی نتیجه ناموفق: {e}")
+    return False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # جستجو با یه اکانت
 # ══════════════════════════════════════════════════════════════════════════════
 async def _search_one(account: dict, query: str,
@@ -755,11 +1043,16 @@ async def _search_one(account: dict, query: str,
                     pages = ctx.pages
                     page = pages[0] if pages else await ctx.new_page()
 
-                    await page.goto(RUBIKA_URL, wait_until="domcontentloaded", timeout=30_000)
-                    await asyncio.sleep(3)
+                    await page.goto(RUBIKA_URL, wait_until="domcontentloaded", timeout=60_000)
 
-                    # بررسی لاگین بودن
-                    logged_in = await _first_selector(page, LOGGED_IN_SELECTORS, timeout=6_000)
+                    # بررسی لاگین بودن — با صبرِ کافی برای بالا آمدنِ اپِ Angular،
+                    # وگرنه اکانتِ سالم به‌اشتباه «منقضی» تشخیص داده و رد می‌شود.
+                    logged_in = None
+                    try:
+                        logged_in = await page.wait_for_selector(
+                            ", ".join(LOGGED_IN_SELECTORS), timeout=45_000, state="attached")
+                    except PwTimeout:
+                        logged_in = None
                     if not logged_in:
                         print(f"[Basir] «{account['name']}» session منقضی — skip")
                         return []
@@ -770,107 +1063,72 @@ async def _search_one(account: dict, query: str,
                     # رابیکا تایپ می‌شود (نه خودِ عبارتِ خام) — طبق درخواستِ کاربر.
                     search_query = f'"{query}"'
 
-                    # پیدا کردن باکس جستجو
-                    search_el = await _first_selector(page, SEARCH_SELECTORS, timeout=12_000)
-                    if not search_el:
+                    # ── ۱) ثبتِ کوئری و برداشتِ کاملِ لیستِ نتایج ─────────────
+                    # اول کلِ لیست برداشته می‌شود و بعد یکی‌یکی استخراج می‌شویم؛
+                    # این‌طور کلیک‌کردن روی نتایج، لیست را ناقص نمی‌کند و هیچ
+                    # ردیفی از قلم نمی‌افتد.
+                    if not await _submit_query(page, search_query):
                         print(f"[Basir] باکس جستجو برای «{account['name']}» پیدا نشد")
                         return []
-
-                    await search_el.click()
-                    await search_el.fill(search_query)
-                    await page.keyboard.press("Enter")
-                    await asyncio.sleep(3)
                     print("Started Searching ... ")
 
-                    # ── جمع‌آوری نتایجِ پیام‌ها ─────────────────────────────
-                    # هر تکرار: باکس جستجو را فعال نگه می‌داریم، لیستِ نتایج را
-                    # تازه جمع می‌کنیم (چون کلیک روی یک نتیجه و باز شدن چت،
-                    # عناصرِ <li> را در Angular بازسازی و data-basir-idx را پاک
-                    # می‌کند)، سپس اولین ردیفِ دیده‌نشده را کلیک و استخراج می‌کنیم.
-                    MessageTemp = []          # پیام‌های نهاییِ استخراج‌شده
-                    seen = set()              # کلیدِ یکتا برای جلوگیری از تکرار
-                    no_progress = 0
+                    rows = await _harvest_results(page, search_query)
 
-                    for _round in range(300):
-                        # ۱) اطمینان از فعال بودنِ جستجو (کوئری حفظ شده باشد)
-                        try:
-                            sb = await _first_selector(page, SEARCH_SELECTORS, timeout=4_000)
-                            if sb:
-                                try:
-                                    cur = (await sb.input_value()) or ""
-                                except Exception:
-                                    cur = ""
-                                if cur.strip() != search_query:
-                                    await sb.click()
-                                    await sb.fill(search_query)
-                                    await page.keyboard.press("Enter")
-                                    await asyncio.sleep(2)
-                                else:
-                                    await sb.click()
-                                    await asyncio.sleep(0.3)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception:
-                            pass
-
-                        # ۲) جمع‌آوریِ تازهٔ ردیف‌های گروهِ «پیام‌ها»
-                        try:
-                            rows = await page.evaluate(_JS_COLLECT_RESULTS)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as e:
-                            rows = []
-                            print(f"collect error: {e}")
-
-                        # ۳) اولین ردیفِ دیده‌نشده
-                        target = None
-                        for row in rows:
-                            title   = (row.get('title') or '').strip()
-                            snippet = (row.get('subtitle') or '').strip()
-                            rdate   = (row.get('time') or '').strip()
-                            key = (title, snippet, rdate)
-                            if not snippet or key in seen:
-                                continue
-                            target = (row, title, snippet, rdate, key)
-                            break
-
-                        if target is None:
-                            # چیزی برای پردازش نمانده → اسکرول برای بارگذاریِ بیشتر
-                            try:
-                                moved = await page.evaluate(_JS_SCROLL_RESULTS)
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception:
-                                moved = 0
-                            await asyncio.sleep(1.2)
-                            no_progress += 1
-                            if no_progress >= 4:
-                                break
+                    # ردیف‌های یکتا با حفظِ ترتیب (اسنیپتِ خالی قابلِ استخراج نیست)
+                    targets: list[dict] = []
+                    seen: set[tuple[str, str, str]] = set()
+                    for row in rows:
+                        key = _row_key(row)
+                        if not key[1] or key in seen:
                             continue
-
-                        row, title, snippet, rdate, key = target
                         seen.add(key)
-                        no_progress = 0
+                        targets.append(row)
 
-                        # کلیک روی نتیجه → پرش به پیام در چت
-                        try:
-                            await page.click(f'[data-basir-idx="{row["idx"]}"]', timeout=8_000)
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as e:
-                            print(f"row click failed: {e}")
-                            continue
-                        await asyncio.sleep(2.2)
+                    total = len(targets)
+                    print(f"[Basir] «{account['name']}» — {total} نتیجهٔ یکتا برای استخراج")
 
-                        msg_details = await _extract_message_details(page, "", snippet)
-                        # تاریخِ دقیقِ حباب را ترجیح می‌دهیم (جداکنندهٔ تاریخِ چت)؛
-                        # اگر نبود، به زمانِ ردیفِ نتیجه برمی‌گردیم.
+                    # ── ۲) استخراجِ جزئیاتِ هر نتیجه ──────────────────────────
+                    MessageTemp = []
+                    for n, row in enumerate(targets, 1):
+                        title, snippet, rdate = _row_key(row)
+                        msg_details = None
+
+                        for attempt in range(1, EXTRACT_ATTEMPTS + 1):
+                            if not await _click_row(page, row, (title, snippet, rdate)):
+                                # فقط اگر لیست واقعاً پاک شده، کوئری را دوباره اجرا کن
+                                try:
+                                    still = await page.evaluate(_JS_COUNT_RESULTS)
+                                except Exception:
+                                    still = 0
+                                if not still:
+                                    await _submit_query(page, search_query)
+                                    await _harvest_results(page, search_query, expect=total)
+                                continue
+
+                            # تلاشِ اول کوتاه‌تر است چون حبابِ درست معمولاً چند
+                            # ثانیه‌ای می‌آید؛ اگر نیامد مشکل «چتِ اشتباه» است و
+                            # کلیکِ مجدد چاره‌ساز است، نه صبرِ بیشتر. در تلاش‌های
+                            # بعدی مهلتِ کامل داده می‌شود تا پیامِ کُند هم برسد.
+                            msg_details = await _extract_message_details(
+                                page, "", snippet,
+                                timeout_ms=(MESSAGE_LOAD_TIMEOUT_MS if attempt > 1
+                                            else max(12_000, MESSAGE_LOAD_TIMEOUT_MS // 2)),
+                            )
+                            if msg_details.get('matched'):
+                                break
+                            print(f"[Basir] تلاش {attempt}/{EXTRACT_ATTEMPTS} برای «{snippet[:30]}»")
+
+                        if msg_details is None:
+                            msg_details = {}
+
+                        # هیچ نتیجه‌ای دور ریخته نمی‌شود؛ اگر استخراجِ کامل نشد،
+                        # اسنیپتِ نتیجه به‌عنوان محتوا می‌ماند.
                         exact_date = (msg_details.get('msg_date') or '').strip()
                         newMessage = {
                             'Title':   title,
                             'Date':    exact_date or rdate,
                             'Content': snippet,
-                            'full_content':    msg_details.get('full_content', ''),
+                            'full_content':    msg_details.get('full_content', '') or snippet,
                             'reactions':       msg_details.get('reactions', []),
                             'total_reactions': msg_details.get('total_reactions', 0),
                             'views':           msg_details.get('views', ''),
@@ -878,8 +1136,10 @@ async def _search_one(account: dict, query: str,
                             'message_link':    msg_details.get('message_link', ''),
                         }
                         MessageTemp.append(newMessage)
-                        print(f"[Basir] Details: views={newMessage['views']}, "
-                              f"reactions={newMessage['total_reactions']}")
+                        print(f"[Basir] {n}/{total} «{title[:20]}» "
+                              f"views={newMessage['views'] or '—'} "
+                              f"reactions={newMessage['total_reactions']} "
+                              f"{'✓' if msg_details.get('matched') else '~'}")
 
                     # ── فیلتر تاریخ + ساخت خروجی ─────────────────────────────
                     for Message in MessageTemp:
@@ -901,13 +1161,6 @@ async def _search_one(account: dict, query: str,
                                                 continue
                                         except ValueError:
                                             pass
-
-                            # فقط پیام‌هایی که محتوای کاملشان استخراج شده در خروجی می‌آیند
-                            msg_full = (Message.get('full_content') or '').strip()
-                            if not msg_full:
-                                print(f"[Basir] پیامِ ناقص (بدون محتوا) — نمایش داده نمی‌شود: "
-                                      f"{(Message.get('Content') or '')[:40]}")
-                                continue
 
                             CorrectDate = parse_rubika_date(Message.get('Date'))
                             if CorrectDate is not None:
