@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}کاوش – بصیر{% endblock %}
+{% block content %}
+<div class="explore-wrapper">
+  <div class="explore-hero">
+    <h1 class="hero-title"><span class="hero-icon">◈</span> کاوش کانال‌ها</h1>
+    <p class="hero-sub">لینک یا آیدی کانال روبیکا را وارد کنید تا آمار آن را بررسی کنید</p>
+  </div>
+
+  <form class="explore-add-form" id="exploreAddForm">
+    <div class="explore-add-box">
+      <textarea id="channelInput" name="channels" class="explore-add-input" rows="3"
+                placeholder="هر خط یک کانال — مثلاً:&#10;@irankhabar&#10;https://rubika.ir/varzesh3&#10;https://rubika.ir/tabnaknews"
+                autocomplete="off" required></textarea>
+    </div>
+    <div class="explore-add-foot">
+      <span class="explore-add-hint">می‌توانید چند کانال را هم‌زمان اضافه کنید؛ هر خط یک لینک یا آیدی.</span>
+      <button type="submit" id="channelAddBtn" class="explore-add-btn">افزودن</button>
+    </div>
+    <div class="explore-add-error" id="channelAddError"></div>
+  </form>
+
+  <div class="explore-toolbar" id="exploreToolbar">
+    <div class="explore-toolbar-right">
+      <span class="toolbar-label">تعداد پستِ آخر برای بررسی:</span>
+      <div class="num-picker">
+        <button type="button" class="num-btn num-dec" id="bulkDec" aria-label="کاهش">−</button>
+        <input type="number" class="num-input" id="bulkNum" min="1" max="50" value="10" />
+        <button type="button" class="num-btn num-inc" id="bulkInc" aria-label="افزایش">+</button>
+      </div>
+      <button type="button" class="explore-analyze-all-btn" id="analyzeAllBtn">بررسی همه</button>
+      <button type="button" class="explore-refresh-all-btn" id="refreshAllBtn">به‌روزرسانی اطلاعات</button>
+      <button type="button" class="explore-delete-all-btn" id="deleteAllBtn">حذف همه</button>
+    </div>
+    <a href="/explore/export_all" class="explore-export-all-btn" id="exportAllBtn" style="display:none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      خروجی کلی
+    </a>
+  </div>
+  <div class="explore-toolbar-status" id="toolbarStatus"></div>
+
+  <div class="explore-grid" id="exploreGrid">
+    {% for c in channels %}
+    {% include "_channel_card.html" %}
+    {% endfor %}
+  </div>
+  <div class="explore-empty" id="exploreEmpty" {% if channels %}style="display:none"{% endif %}>
+    هنوز کانالی اضافه نکرده‌اید. از باکس بالا یک کانال اضافه کنید.
+  </div>
+</div>
+
+<!-- ══ مودال آمار کانال ══════════════════════════════════════════════ -->
+<div class="em-overlay" id="statsModal" style="display:none">
+  <div class="em-box">
+    <div class="em-head">
+      <h3 class="em-title" id="modalTitle">آمار کانال</h3>
+      <button class="em-close" id="modalClose" aria-label="بستن">&times;</button>
+    </div>
+    <div class="em-body">
+      <div class="modal-loading" id="modalLoading">
+        <div class="spinner"></div>
+        <p id="modalLoadingText">در حال بررسی پست‌ها... این ممکن است چند دقیقه طول بکشد.</p>
+      </div>
+      <div class="modal-error" id="modalError" style="display:none"></div>
+      <div class="stats-grid" id="statsGrid" style="display:none">
+        <div class="stat-item"><span class="stat-value" id="stPosts">—</span><span class="stat-label">پست بررسی‌شده</span></div>
+        <div class="stat-item"><span class="stat-value" id="stViews">—</span><span class="stat-label">مجموع بازدید</span></div>
+        <div class="stat-item"><span class="stat-value" id="stReactions">—</span><span class="stat-label">مجموع ری‌اکشن</span></div>
+        <div class="stat-item"><span class="stat-value" id="stAvgViews">—</span><span class="stat-label">میانگین بازدید هر پست</span></div>
+        <div class="stat-item"><span class="stat-value" id="stAvgReactions">—</span><span class="stat-label">میانگین ری‌اکشن هر پست</span></div>
+        <div class="stat-item"><span class="stat-value" id="stEngagement">—</span><span class="stat-label">نرخ تعامل (٪)</span></div>
+      </div>
+    </div>
+    <div class="em-foot">
+      <a href="#" class="explore-export-btn" id="modalExportBtn" style="display:none">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        خروجی اکسل
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='explore.js') }}"></script>
+{% endblock %}

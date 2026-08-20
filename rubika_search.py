@@ -193,12 +193,29 @@ _EMOJI_SHORTCODES: dict[str, str] = {
     "bookmark": "🔖", "books": "📚", "book": "📖", "clock": "🕐",
     "alarm_clock": "⏰", "hourglass": "⌛", "watch": "⌚", "globe": "🌐",
     "earth_asia": "🌏", "flag_ir": "🇮🇷", "ir": "🇮🇷",
+    # نام‌کوتاه‌هایی که کانال‌های خبریِ روبیکا زیاد به کار می‌برند
+    "large_blue_circle": "🔵", "small_red_triangle": "🔺",
+    "small_red_triangle_down": "🔻", "black_small_square": "▪️",
+    "white_small_square": "▫️", "black_medium_small_square": "◾",
+    "white_medium_small_square": "◽", "radio_button": "🔘",
+    "eight_pointed_black_star": "✴️", "eight_spoked_asterisk": "✳️",
+    "arrow_forward": "▶️", "arrow_backward": "◀️", "arrow_up": "⬆️",
+    "arrow_down": "⬇️", "arrow_left": "⬅️", "arrow_right": "➡️",
+    "arrow_right_hook": "↪️", "arrow_left_hook": "↩️",
+    "triangular_flag_on_post": "🚩", "checkered_flag": "🏁",
+    "hourglass_flowing_sand": "⏳", "no_entry_sign": "🚫",
+    "no_entry": "⛔", "stop_sign": "🛑", "cd": "💽",
+    "copyright": "©️", "tm": "™️", "registered": "®️",
 }
 
 
 def _shortcode_to_emoji(name: str) -> str | None:
-    key = (name or "").strip().strip(":").strip().lower().replace("-", "_").replace(" ", "_")
-    return _EMOJI_SHORTCODES.get(key)
+    raw = (name or "").strip().strip(":").strip().lower()
+    # ری‌اکشن‌های «+1»/«-1» باید عیناً جستجو شوند؛ عادی‌سازیِ خط‌تیره آن‌ها را به
+    # «_1» تبدیل می‌کند و از دیکشنری جا می‌مانند.
+    if raw in _EMOJI_SHORTCODES:
+        return _EMOJI_SHORTCODES[raw]
+    return _EMOJI_SHORTCODES.get(raw.replace("-", "_").replace(" ", "_"))
 
 
 def emojify(text: str) -> str:
