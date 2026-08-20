@@ -16,7 +16,11 @@ import users as user_store
 import login_manager
 import jobs
 import job_runner
+import rubika_explore
+import explore_store
+import explore_runner
 from rubika_search import search_all_accounts, profile_has_data
+from explore_export import generate_channel_stats_excel, generate_all_channels_excel
 from export import generate_excel
 from stats_export import generate_stats_excel, _compute as _compute_stats, _fmt_int, _fmt_float
 from report_export import generate_report_excel
@@ -371,6 +375,190 @@ def session_result_delete():
         return jsonify({"ok": False})
     _save_results(new_data)
     return jsonify({"ok": True})
+
+
+# ── کاوش کانال‌ها ──────────────────────────────────────────────────────────────
+@app.route("/explore")
+@login_required
+def explore_page():
+    return render_template(
+        "explore.html",
+        channels=explore_store.list_channels(),
+    )
+
+
+@app.route("/explore/add", methods=["POST"])
+@login_required
+def explore_add():
+    raw = (request.form.get("channel") or "").strip()
+    if not raw:
+        return jsonify({"ok": False, "error": "لطفاً لینک یا آیدی کانال را وارد کنید."}), 400
+    try:
+        info = rubika_explore.run_sync(rubika_explore.fetch_channel_info(raw))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"خطا در دریافت اطلاعات کانال: {exc}"}), 500
+    if not info:
+        return jsonify({"ok": False, "error": "کانالی با این لینک/آیدی پیدا نشد."}), 404
+    ok, msg, record = explore_store.add_channel(session.get("user", ""), info)
+    return jsonify({"ok": ok, "message": msg, "channel": record}), (200 if ok else 409)
+
+
+@app.route("/explore/add_bulk", methods=["POST"])
+@login_required
+def explore_add_bulk():
+    raw = request.form.get("channels") or ""
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    # حذفِ ورودی‌های تکراری با حفظِ ترتیب
+    seen = set()
+    lines = [ln for ln in lines if not (ln in seen or seen.add(ln))]
+    if not lines:
+        return jsonify({"ok": False, "error": "لطفاً حداقل یک لینک یا آیدی کانال وارد کنید."}), 400
+    try:
+        infos = rubika_explore.run_sync(rubika_explore.fetch_channel_info_bulk(lines))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"خطا در دریافت اطلاعات کانال‌ها: {exc}"}), 500
+
+    owner = session.get("user", "")
+    items = []
+    added = failed = duplicate = 0
+    for res in infos:
+        entry = {"raw": res["raw"]}
+        if res.get("info"):
+            ok, msg, record = explore_store.add_channel(owner, res["info"])
+            entry["ok"] = ok
+            entry["message"] = msg
+            entry["channel"] = record
+            if ok:
+                added += 1
+            else:
+                duplicate += 1
+        else:
+            entry["ok"] = False
+            entry["message"] = res.get("error") or "کانالی با این لینک/آیدی پیدا نشد."
+            entry["channel"] = None
+            failed += 1
+        items.append(entry)
+    return jsonify({"ok": True, "added": added, "duplicate": duplicate,
+                    "failed": failed, "items": items})
+
+
+@app.route("/explore/delete/<channel_id>", methods=["POST"])
+@login_required
+def explore_delete(channel_id):
+    ok = explore_store.delete_channel(channel_id)
+    if ok:
+        explore_runner.delete_analysis(channel_id)
+    return jsonify({"ok": ok})
+
+
+@app.route("/explore/delete_all", methods=["POST"])
+@login_required
+def explore_delete_all():
+    """حذفِ همهٔ کانال‌های کاوش (سراسری)."""
+    count = explore_store.delete_all_channels()
+    explore_runner.clear_all()
+    return jsonify({"ok": True, "count": count})
+
+
+@app.route("/explore/refresh_all", methods=["POST"])
+@login_required
+def explore_refresh_all():
+    """
+    اطلاعاتِ نمایشیِ همهٔ کانال‌ها (عنوان/بیو/تعدادِ مشترکان/آواتار) را دوباره از
+    وب‌اپِ روبیکا می‌خواند و به‌روز می‌کند — درست مثل اینکه همین الان دوباره
+    اضافه شده باشند.
+    """
+    channels = explore_store.list_channels()
+    if not channels:
+        return jsonify({"ok": False, "error": "هیچ کانالی برای به‌روزرسانی وجود ندارد."}), 400
+    raws = [c.get("username") or c.get("url") or "" for c in channels]
+    try:
+        infos = rubika_explore.run_sync(rubika_explore.fetch_channel_info_bulk(raws))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"خطا در به‌روزرسانیِ اطلاعات: {exc}"}), 500
+
+    items = []
+    updated = failed = 0
+    for ch, res in zip(channels, infos):
+        if res.get("info"):
+            record = explore_store.update_channel(ch["id"], res["info"])
+            items.append({"id": ch["id"], "ok": True, "channel": record})
+            updated += 1
+        else:
+            items.append({"id": ch["id"], "ok": False,
+                          "error": res.get("error") or "اطلاعاتِ تازه پیدا نشد."})
+            failed += 1
+    return jsonify({"ok": True, "updated": updated, "failed": failed, "items": items})
+
+
+@app.route("/explore/analyze", methods=["POST"])
+@login_required
+def explore_analyze():
+    """بررسیِ همهٔ کانال‌ها با همان تعدادِ پست (سراسری و یکپارچه)."""
+    try:
+        num_posts = int(request.form.get("num_posts", "10"))
+    except (TypeError, ValueError):
+        num_posts = 10
+    num_posts = max(1, min(config.EXPLORE_MAX_POSTS, num_posts))
+    channels = explore_store.list_channels()
+    if not channels:
+        return jsonify({"ok": False, "error": "هیچ کانالی برای بررسی وجود ندارد."}), 400
+    explore_runner.start_batch(channels, num_posts, session.get("user", ""))
+    return jsonify({"ok": True, "count": len(channels), "num_posts": num_posts})
+
+
+@app.route("/explore/status")
+@login_required
+def explore_status():
+    """وضعیتِ بررسیِ همهٔ کانال‌ها (سراسری)."""
+    return jsonify({"ok": True, "channels": explore_runner.all_status()})
+
+
+@app.route("/explore/analysis/<channel_id>")
+@login_required
+def explore_analysis(channel_id):
+    """نتیجهٔ کاملِ بررسیِ یک کانال (برای مودالِ نمایش)."""
+    item = explore_runner.get_analysis(channel_id)
+    if not item:
+        return jsonify({"ok": False, "error": "یافت نشد."}), 404
+    return jsonify({
+        "ok": True,
+        "status": item.get("status", ""),
+        "result": item.get("result"),
+        "error": item.get("error", ""),
+    })
+
+
+@app.route("/explore/export/<channel_id>")
+@login_required
+def explore_export(channel_id):
+    item = explore_runner.get_analysis(channel_id)
+    result = (item or {}).get("result")
+    if not item or item.get("status") != explore_runner.ST_DONE or not result:
+        flash("آمار هنوز آماده نیست.", "warning")
+        return redirect(url_for("explore_page"))
+    return send_file(
+        generate_channel_stats_excel(result),
+        as_attachment=True,
+        download_name=f"basir_channel_{result.get('username','')}.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+@app.route("/explore/export_all")
+@login_required
+def explore_export_all():
+    current_ids = {c["id"] for c in explore_store.list_channels()}
+    records = [r for r in explore_runner.done_records() if r.get("channel_id") in current_ids]
+    if not records:
+        flash("هنوز آمارِ آماده‌ای برای خروجی وجود ندارد.", "warning")
+        return redirect(url_for("explore_page"))
+    return send_file(
+        generate_all_channels_excel(records),
+        as_attachment=True,
+        download_name="basir_channels_stats.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 # ── مدیریت کاربران (فقط مدیر) ────────────────────────────────────────────────────

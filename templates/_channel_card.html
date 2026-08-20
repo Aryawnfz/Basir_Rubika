@@ -1,0 +1,19 @@
+<div class="channel-card" data-id="{{ c.id }}" data-username="{{ c.username }}">
+  <button class="channel-remove" title="حذف از لیست" aria-label="حذف">&times;</button>
+  <div class="channel-avatar">
+    {% if c.avatar_url %}
+    <img src="{{ c.avatar_url }}" alt="{{ c.title }}" referrerpolicy="no-referrer" />
+    {% else %}
+    <span class="channel-avatar-letter" style="background-color: {{ c.avatar_color or '#7c4dff' }}">{{ c.avatar_letter or c.title[:1] }}</span>
+    {% endif %}
+  </div>
+  <div class="channel-title">{{ c.title }}</div>
+  {% if c.username %}<div class="channel-username">@{{ c.username }}</div>{% endif %}
+  {% if c.bio %}<div class="channel-bio">{{ c.bio }}</div>{% endif %}
+  <div class="channel-members">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/></svg>
+    <span>{{ c.members or (c.members_count ~ ' مشترک') }}</span>
+  </div>
+  <div class="channel-status"></div>
+  <button type="button" class="channel-show-btn" style="display:none">نمایش</button>
+</div>
